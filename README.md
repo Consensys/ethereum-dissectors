@@ -1,4 +1,12 @@
-# Wireshark dissectors for Ethereum devp2p protocols 🔍
+# 🔍 Wireshark dissectors for Ethereum devp2p protocols
+
+   * [Introduction](#introduction)
+   * [Roadmap](#roadmap)
+   * [Team](#team)
+   * [Get Involved](#get-involved)
+   * [License](#license)
+
+# Introduction
 
 In the Protocol Engineering Groups and Systems team (PegaSys) at ConsenSys, we specialise in the low-level, deep aspects of the Ethereum technology. Some of the challenges we tackle are: scalability, secrecy, modularity, finality, permissioning, etc.
 
