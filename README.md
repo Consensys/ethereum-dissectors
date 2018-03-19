@@ -1,5 +1,7 @@
 # 🔍 Wireshark dissectors for Ethereum devp2p protocols
 
+**Table of contents:**
+
    * [Introduction](#introduction)
    * [Roadmap](#roadmap)
    * [Team](#team)
