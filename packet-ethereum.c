@@ -9,6 +9,15 @@ static int hf_ethereum_pdu_hash = -1;
 static int hf_ethereum_pdu_signature = -1;
 static int hf_ethereum_pdu_type = -1;
 static int hf_ethereum_pdu_data = -1;
+/* The following is for Ping message */
+static int hf_ethereum_ping_version = -1;
+static int hf_ethereum_ping_sender_ip = -1;
+static int hf_ethereum_ping_sender_udp_port = -1;
+static int hf_ethereum_ping_sender_tcp_port = -1;
+static int hf_ethereum_ping_recipient_ip = -1;
+static int hf_ethereum_ping_recipient_udp_port = -1;
+static int hf_ethereum_ping_expiration = -1;
+
 static gint ett_ethereum = -1;
 
 static int dissect_ethereum(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
@@ -24,8 +33,33 @@ static int dissect_ethereum(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree 
     proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_signature, tvb, offset, 65, ENC_BIG_ENDIAN);
     offset += 65;
     proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_type, tvb, offset, 1, ENC_BIG_ENDIAN);
+    //Check the version
+    guint value;
+    value = tvb_get_guint8(tvb, offset);
     offset += 1;
-    proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_data, tvb, offset, -1, ENC_BIG_ENDIAN);
+    if (value == 0x01) {
+	offset += 1;	//Skip unknown packet 0xdc
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_version, tvb, offset, 1, ENC_BIG_ENDIAN);
+	offset += 1;
+	offset += 2;	//Skip unknown packet 0xcb84
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
+	offset += 4;	
+	offset += 1;	//Skip unknown packet 0x82
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+	offset += 2;
+	offset += 1;	//Skip unknown packet 0x82
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+	offset += 2;
+	offset += 2;	//Skip unknown packet 0xc984
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_recipient_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
+	offset += 4;
+	offset += 1;	//Skip unknown packet 0x82
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+	offset += 2;
+	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_expiration, tvb, offset, -1, ENC_BIG_ENDIAN); 
+    } else {
+        proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_data, tvb, offset, -1, ENC_BIG_ENDIAN);
+    }
 
     return tvb_captured_length(tvb);
 }
@@ -56,6 +90,55 @@ void proto_register_ethereum(void) {
 
 	{ &hf_ethereum_pdu_data,
 	    { "ETHEREUM DEVP2P Data", "Ethdevp2p.data",
+	    FT_BYTES, SEP_SPACE,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_version,
+	    { "ETHEREUM DEVP2P Ping Version", "Ethdevp2p.ping.version",
+	    FT_UINT16, BASE_DEC,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_sender_ip,
+	    { "ETHEREUM DEVP2P Ping Sender IP", "Ethdevp2p.ping.sender-ip",
+	    FT_IPv4, BASE_NONE,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_sender_udp_port,
+	    { "ETHEREUM DEVP2P Ping Sender UDP Port", "Ethdevp2p.ping.sender-udp-port",
+	    FT_UINT32, BASE_DEC,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_sender_tcp_port,
+	    { "ETHEREUM DEVP2P Ping Sender TCP Port", "Ethdevp2p.ping.sender-tcp-port",
+	    FT_UINT32, BASE_DEC,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_recipient_ip,
+	    { "ETHEREUM DEVP2P Ping Recipient IP", "Ethdevp2p.ping.recipient-ip",
+	    FT_IPv4, BASE_NONE,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_recipient_udp_port,
+	    { "ETHEREUM DEVP2P Ping Recipient UDP Port", "Ethdevp2p.ping.recipient-udp-port",
+	    FT_UINT32, BASE_DEC,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethereum_ping_expiration,
+	    { "ETHEREUM DEVP2P Ping Expiration", "Ethdevp2p.ping.expiration",
 	    FT_BYTES, SEP_SPACE,
 	    NULL, 0X0,
 	    NULL, HFILL }
