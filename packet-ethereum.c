@@ -3,6 +3,7 @@
 #include <epan/packet.h>
 
 #define ETHEREUM_PORT 30303
+#define MIN_ETHEREUM_LEN 98
 
 static int proto_ethereum = -1;
 static int hf_ethereum_pdu_hash = -1;
@@ -33,6 +34,8 @@ static int hf_ethereum_neighbors_nodes_tcp_port = -1;
 static int hf_ethereum_neighbors_nodes_id = -1;
 static int hf_ethereum_neighbors_expiration = -1;
 static int hf_ethereum_neighbors_rest = -1;
+
+static heur_dissector_list_t heur_subdissector_list;
 
 
 
@@ -121,6 +124,57 @@ static int dissect_ethereum(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree 
         proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_data, tvb, offset, -1, ENC_BIG_ENDIAN);
     }
     return tvb_captured_length(tvb);
+}
+
+static gboolean
+dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+	guint   len;
+
+	len = tvb_captured_length(tvb);
+	/* First, make sure we have enough data to do the check. */
+	if (len < MIN_ETHEREUM_LEN) {
+		  return FALSE;
+	}
+
+	msn = tvb_get_ntohs(tvb, 97);
+
+	if (msn != 0x01 && msn != 0x02 && msn != 0x03 && msn != 0x04) {
+	  return FALSE;
+	}
+	guint    offset = MIN_ETHEREUM_LEN;
+	switch(msn){
+		case 0x01:
+		    offset += 25;
+			if(len != offset) {
+		        return FALSE
+			}
+			break;
+		case 0x02:
+		    offset += 47;
+			if(len != offset) {
+		        return FALSE
+			}
+			break;
+		case 0x03:
+		    offset += 69;
+			if(len != offset) {
+		        return FALSE
+			}
+			break;
+		case 0x04:
+		    guint    nodeNumber = (tvb_captured_length(tvb) - 151) / 79;
+			offset += 6;
+			guint    len_per_node = 79;
+			if(len != (nodeNumber * len_per_node + offset)) {
+		        return FALSE
+			}
+			break;
+		default:
+		    return FALSE
+	}
+	dissect_ethereum(tvb, pinfo, tree, data _U_);
+	return true;
 }
 
 void proto_register_ethereum(void) {
@@ -306,7 +360,7 @@ void proto_register_ethereum(void) {
 		    "ETHDEVP2PDISCO",
 		    "ethdevp2pdisco"
 		    );
-
+	heur_subdissector_list = register_heur_dissector_list("ethereum", proto_ethereum);
     proto_register_field_array(proto_ethereum, hf, array_length(hf));
     proto_register_subtree_array(ett, array_length(ett));    
 }

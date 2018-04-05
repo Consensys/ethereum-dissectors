@@ -20,6 +20,14 @@ On the other hand, [Wireshark](https://www.wireshark.org/) is a popular tool for
 
 Unfortunately no Wireshark dissectors exist yet for Ethereum devp2p protocols. This project changes that.
 
+# Install
+
+Run either install.bat (and re-build wireshark) or install.sh. If this doesn't work manually do the following steps and then rebuild wireshark:
+
+make a Wireshark\plugins\epan\devp2p folder
+copy the files packet-ethereum.c, CMakeLists.txt, Makefile.am, README, Custom.m4, Custom.make into that folder
+copy the file CMakeListsCustom.txt to the wireshark root folder
+
 # Roadmap
 
 Specification: https://docs.google.com/document/d/1JKG6rZOq0F0GvPMWR3Gp-WyTQnHxGDx7PGpWCPiIADo

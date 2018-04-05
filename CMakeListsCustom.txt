@@ -1,0 +1,3 @@
+set(CUSTOM_PLUGIN_SRC_DIR
+	plugins/epan/devp2p
+)
