@@ -130,6 +130,7 @@ static gboolean
 dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
 	guint   len;
+	guint   msn;
 
 	len = tvb_captured_length(tvb);
 	/* First, make sure we have enough data to do the check. */
@@ -147,19 +148,19 @@ dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 		case 0x01:
 		    offset += 25;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x02:
 		    offset += 47;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x03:
 		    offset += 69;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x04:
@@ -167,14 +168,14 @@ dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 			offset += 6;
 			guint    len_per_node = 79;
 			if(len != (nodeNumber * len_per_node + offset)) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		default:
-		    return FALSE
+		    return FALSE;
 	}
 	dissect_ethereum(tvb, pinfo, tree, data _U_);
-	return true;
+	return TRUE;
 }
 
 void proto_register_ethereum(void) {
