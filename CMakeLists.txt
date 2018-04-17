@@ -9,6 +9,10 @@ set(DISSECTOR_SRC
 
 set(PLUGIN_FILES
 	plugin.c
+	common.cpp
+	commonData.cpp
+	FixedHash.cpp
+	RLP.cpp
 	${DISSECTOR_SRC}
 )
 
