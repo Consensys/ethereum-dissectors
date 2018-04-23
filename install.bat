@@ -6,14 +6,4 @@ copy Makefile.am C:\Development\Wireshark\plugins\epan\devp2p\.
 copy README C:\Development\Wireshark\plugins\epan\devp2p\.
 copy Custom.m4 C:\Development\Wireshark\plugins\epan\devp2p\.
 copy Custom.make C:\Development\Wireshark\plugins\epan\devp2p\.
-copy Common.cpp C:\Development\Wireshark\plugins\epan\devp2p\.
-copy Common.h C:\Development\Wireshark\plugins\epan\devp2p\.
-copy CommonData.cpp C:\Development\Wireshark\plugins\epan\devp2p\.
-copy CommonData.h C:\Development\Wireshark\plugins\epan\devp2p\.
-copy Exceptions.h C:\Development\Wireshark\plugins\epan\devp2p\.
-copy FixedHash.cpp C:\Development\Wireshark\plugins\epan\devp2p\.
-copy FixedHash.h C:\Development\Wireshark\plugins\epan\devp2p\.
-copy RLP.cpp C:\Development\Wireshark\plugins\epan\devp2p\.
-copy RLP.h C:\Development\Wireshark\plugins\epan\devp2p\.
-copy vector_ref.h C:\Development\Wireshark\plugins\epan\devp2p\.
 copy CMakeListsCustom.txt C:\Development\Wireshark\.

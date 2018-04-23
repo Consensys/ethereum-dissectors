@@ -1,33 +1,33 @@
-macro(replace_if_different SOURCE DST)
-	set(extra_macro_args ${ARGN})
-	set(options CREATE)
-	set(one_value_args)
-	set(multi_value_args)
-	cmake_parse_arguments(REPLACE_IF_DIFFERENT "${options}" "${one_value_args}" "${multi_value_args}" "${extra_macro_args}")
-
-	if (REPLACE_IF_DIFFERENT_CREATE AND (NOT (EXISTS "${DST}")))
-		file(WRITE "${DST}" "")
-	endif()
-
-	execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOURCE}" "${DST}" RESULT_VARIABLE DIFFERENT OUTPUT_QUIET ERROR_QUIET)
-
-	if (DIFFERENT)
-		execute_process(COMMAND ${CMAKE_COMMAND} -E rename "${SOURCE}" "${DST}")
-	else()
-		execute_process(COMMAND ${CMAKE_COMMAND} -E remove "${SOURCE}")
-	endif()
-endmacro()
+#macro(replace_if_different SOURCE DST)
+#	set(extra_macro_args ${ARGN})
+#	set(options CREATE)
+#	set(one_value_args)
+#	set(multi_value_args)
+#	cmake_parse_arguments(REPLACE_IF_DIFFERENT "${options}" "${one_value_args}" "${multi_value_args}" "${extra_macro_args}")
+#
+#	if (REPLACE_IF_DIFFERENT_CREATE AND (NOT (EXISTS "${DST}")))
+#		file(WRITE "${DST}" "")
+#	endif()
+#
+#	execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOURCE}" "${DST}" RESULT_VARIABLE DIFFERENT OUTPUT_QUIET ERROR_QUIET)
+#
+#	if (DIFFERENT)
+#		execute_process(COMMAND ${CMAKE_COMMAND} -E rename "${SOURCE}" "${DST}")
+#	else()
+#		execute_process(COMMAND ${CMAKE_COMMAND} -E remove "${SOURCE}")
+#	endif()
+#endmacro()
 
 include(WiresharkPlugin)
 
 set_module_info(devp2p 0 0 0 0)
 
-set(TMPFILE "./BuildInfo.h.tmp")
-set(OUTFILE "./BuildInfo.h")
-set(README "./README.md")
+#set(TMPFILE "./BuildInfo.h.tmp")
+#set(OUTFILE "./BuildInfo.h")
+#set(README "./README.md")
 
-configure_file("${README}" "${TMPFILE}")
-replace_if_different("${TMPFILE}" "${OUTFILE}" CREATE)
+#configure_file("${README}" "${TMPFILE}")
+#replace_if_different("${TMPFILE}" "${OUTFILE}" CREATE)
 
 set(DISSECTOR_SRC
 	packet-ethereum.c
@@ -35,10 +35,6 @@ set(DISSECTOR_SRC
 
 set(PLUGIN_FILES
 	plugin.c
-	common.cpp
-	commonData.cpp
-	FixedHash.cpp
-	RLP.cpp
 	${DISSECTOR_SRC}
 )
 
