@@ -6,6 +6,10 @@ set_module_info(devp2p 0 0 0 0)
 set(TMPFILE "./BuildInfo.h.tmp")
 set(OUTFILE "./BuildInfo.h")
 
+configure_file("./README.md" "${TMPFILE}")
+
+replace_if_different("${TMPFILE}" "${OUTFILE}" CREATE)
+
 set(DISSECTOR_SRC
 	packet-ethereum.c
 )
