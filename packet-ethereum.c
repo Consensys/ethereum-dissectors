@@ -5,35 +5,54 @@
 #define ETHEREUM_PORT 30303
 #define MIN_ETHEREUM_LEN 98
 
-static int proto_ethereum = -1;
-static int hf_ethereum_pdu_hash = -1;
-static int hf_ethereum_pdu_signature = -1;
-static int hf_ethereum_pdu_type = -1;
-static int hf_ethereum_pdu_data = -1;
-/* The following is for Ping message */
-static int hf_ethereum_ping_version = -1;
-static int hf_ethereum_ping_sender_ip = -1;
-static int hf_ethereum_ping_sender_udp_port = -1;
-static int hf_ethereum_ping_sender_tcp_port = -1;
-static int hf_ethereum_ping_recipient_ip = -1;
-static int hf_ethereum_ping_recipient_udp_port = -1;
-static int hf_ethereum_ping_expiration = -1;
-/* The following is for Pong message */
-static int hf_ethereum_pong_recipient_ip = -1;
-static int hf_ethereum_pong_recipient_udp_port = -1;
-static int hf_ethereum_pong_recipient_tcp_port = -1;
-static int hf_ethereum_pong_ping_hash = -1;
-static int hf_ethereum_pong_expiration = -1;
-/* The following is for FindNode message */
-static int hf_ethereum_findNode_target = -1;
-static int hf_ethereum_findNode_expiration = -1;
-/* The following is for Neighbors Packet */
-static int hf_ethereum_neighbors_nodes_ip = -1;
-static int hf_ethereum_neighbors_nodes_udp_port = -1;
-static int hf_ethereum_neighbors_nodes_tcp_port = -1;
-static int hf_ethereum_neighbors_nodes_id = -1;
-static int hf_ethereum_neighbors_expiration = -1;
-static int hf_ethereum_neighbors_rest = -1;
+/* Sub tree */
+static int proto_ethdevp2p = -1;
+static gint ett_ethdevp2p = -1;
+static int proto_ethdevp2p_packet = -1;
+static gint ett_ethdevp2p_packet = -1;
+static int proto_ethdevp2p_node = -1;
+static gint ett_ethdevp2p_node = -1;
+
+static const value_string packettypenames[] = {
+    { 0x01, "Ping Packet" },
+    { 0x02, "Pong Packet" },
+    { 0x03, "FindNode Packet" },
+    { 0x04, "Neighbors Packet" }
+};
+
+static int hf_ethdevp2p_hash = -1;
+static int hf_ethdevp2p_signature = -1;
+static int hf_ethdevp2p_packet_type = -1;
+/* For Ping Message */
+static int hf_ethdevp2p_ping_version = -1;
+static int hf_ethdevp2p_ping_sender_ipv4 = -1;
+static int hf_ethdevp2p_ping_sender_ipv6 = -1;
+static int hf_ethdevp2p_ping_sender_udp_port = -1;
+static int hf_ethdevp2p_ping_sender_tcp_port = -1;
+static int hf_ethdevp2p_ping_recipient_ipv4 = -1;
+static int hf_ethdevp2p_ping_recipient_ipv6 = -1;
+static int hf_ethdevp2p_ping_recipient_udp_port = -1;
+static int hf_ethdevp2p_ping_recipient_tcp_port = -1;
+static int hf_ethdevp2p_ping_expiration = -1;
+/* For Pong Message */
+static int hf_ethdevp2p_pong_recipient_ipv4 = -1;
+static int hf_ethdevp2p_pong_recipient_ipv6 = -1;
+static int hf_ethdevp2p_pong_recipient_udp_port = -1;
+static int hf_ethdevp2p_pong_recipient_tcp_port = -1;
+static int hf_ethdevp2p_pong_ping_hash = -1;
+static int hf_ethdevp2p_pong_expiration = -1;
+/* For FindNode Message */
+static int hf_ethdevp2p_findNode_target = -1;
+static int hf_ethdevp2p_findNode_expiration = -1;
+/* For Neighbors Message */
+static int hf_ethdevp2p_neighbors_nodes_ipv4 = -1;
+static int hf_ethdevp2p_neighbors_nodes_ipv6 = -1;
+static int hf_ethdevp2p_neighbors_nodes_udp_port = -1;
+static int hf_ethdevp2p_neighbors_nodes_tcp_port = -1;
+static int hf_ethdevp2p_neighbors_nodes_id = -1;
+static int hf_ethdevp2p_neighbors_expiration = -1;
+/* Test only */
+static int hf_ethdevp2p_data = -1;
 
 static heur_dissector_list_t heur_subdissector_list;
 
@@ -47,100 +66,230 @@ static const guint8* st_str_packet_types = "FOO Packet Types";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
 
+static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
+	gint offset = 0;
+	guint test;
+	col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PDISCO");
+	col_clear(pinfo->cinfo, COL_INFO);
 
-
-static gint ett_ethereum = -1;
-
-static int dissect_ethereum(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
-    gint offset = 0;
-    gint nodeNumber = 0;
-    col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PDISCO");
-    col_clear(pinfo->cinfo, COL_INFO);
-
-    proto_item *ti = proto_tree_add_item(tree, proto_ethereum, tvb, 0, -1, ENC_NA);
-
-    proto_tree *ethereum_tree = proto_item_add_subtree(ti, ett_ethereum);
-    proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_hash, tvb, offset, 32, ENC_BIG_ENDIAN);
-    offset += 32;
-    proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_signature, tvb, offset, 65, ENC_BIG_ENDIAN);
-    offset += 65;
-    proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_type, tvb, offset, 1, ENC_BIG_ENDIAN);
-    //Check the version
-    guint value;
-    value = tvb_get_guint8(tvb, offset);
-    offset += 1;
-    if (value == 0x01) {
-	offset += 1;	//Skip packet 0xdc
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_version, tvb, offset, 1, ENC_BIG_ENDIAN);
-	offset += 1;
-	offset += 2;	//Skip packet 0xcb84
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
-	offset += 4;	
-	offset += 1;	//Skip packet 0x82
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	offset += 2;
-	offset += 1;	//Skip packet 0x82
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_sender_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	offset += 2;
-	offset += 2;	//Skip packet 0xc984
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_recipient_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
-	offset += 4;
-	offset += 1;	//Skip packet 0x82
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	offset += 2;
-	offset += 2;	//Skip packet 0x8084
-	proto_tree_add_item(ethereum_tree, hf_ethereum_ping_expiration, tvb, offset, -1, ENC_BIG_ENDIAN); 
-    } else if (value == 0x02) {
-	offset += 3;	//Skip packet 0xf2cb84
-	proto_tree_add_item(ethereum_tree, hf_ethereum_pong_recipient_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
-	offset += 4;
-	offset += 1;	//Skip packet 0x82
-	proto_tree_add_item(ethereum_tree, hf_ethereum_pong_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	offset += 2;
-	offset += 1;	//Skip packet 0x82
-	proto_tree_add_item(ethereum_tree, hf_ethereum_pong_recipient_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	offset += 2;
-	offset += 1;	//Skip 0xa0
-	proto_tree_add_item(ethereum_tree, hf_ethereum_pong_ping_hash, tvb, offset, 32, ENC_BIG_ENDIAN);
+	proto_item *ti = proto_tree_add_item(tree, proto_ethdevp2p, tvb, 0, -1, ENC_NA);
+	proto_tree *ethdevp2p_tree = proto_item_add_subtree(ti, ett_ethdevp2p);
+	/* Add Header */
+	proto_tree_add_item(ethdevp2p_tree, hf_ethdevp2p_hash, tvb, offset, 32, ENC_BIG_ENDIAN);
 	offset += 32;
-	offset += 1;	//Skip 0x84
-	proto_tree_add_item(ethereum_tree, hf_ethereum_pong_expiration, tvb, offset, -1, ENC_BIG_ENDIAN);
-    } else if (value == 0x03) {
-	offset += 3;	//Skip packet 0xf847b8
-	proto_tree_add_item(ethereum_tree, hf_ethereum_findNode_target, tvb, offset, 65, ENC_BIG_ENDIAN);
+	proto_tree_add_item(ethdevp2p_tree, hf_ethdevp2p_signature, tvb, offset, 65, ENC_BIG_ENDIAN);
 	offset += 65;
-	offset += 1;	//Skip 0x84
-	proto_tree_add_item(ethereum_tree, hf_ethereum_findNode_expiration, tvb, offset, -1, ENC_BIG_ENDIAN);
-    } else if (value == 0x04) {
-	nodeNumber = (tvb_captured_length(tvb) - 151) / 79;
-	offset += 6;	//Skip header packets
-	for (int j = 0; j < nodeNumber + 1; j++) {
-	    offset += 2;	//Skip 0xf84d
-	    offset += 1;	//Skip 0x84
-	    proto_tree_add_item(ethereum_tree, hf_ethereum_neighbors_nodes_ip, tvb, offset, 4, ENC_BIG_ENDIAN);
-	    offset += 4;
-	    offset += 1;	//Skip 0x82
-	    proto_tree_add_item(ethereum_tree, hf_ethereum_neighbors_nodes_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	    offset += 2;
-	    offset += 1;	//Skip 0x82
-	    proto_tree_add_item(ethereum_tree, hf_ethereum_neighbors_nodes_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-	    offset += 2;
-	    offset += 1;	//Skip 0xb8
-	    proto_tree_add_item(ethereum_tree, hf_ethereum_neighbors_nodes_id, tvb, offset, 65, ENC_BIG_ENDIAN);
-	    offset += 65;
+
+	/* Add Packet Sub Tree */
+	proto_item *tiPacket = proto_tree_add_item(ethdevp2p_tree, proto_ethdevp2p_packet, tvb, offset, -1, ENC_NA);
+	proto_tree *ethdevp2p_packet = proto_item_add_subtree(tiPacket, ett_ethdevp2p_packet);
+
+	/* Packet Type */
+	/* Get the Packet Type */
+	guint value;
+	value = tvb_get_guint8(tvb, offset);
+
+	/* Add the Packet Type to the Sub Tree */
+	proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_packet_type, tvb, offset, 1, ENC_BIG_ENDIAN);
+	offset += 1;
+
+	if (value == 0x01) {
+		/* This is a Ping Message */
+		offset += 1;	//Skip Prefix
+		//Getting Ping Version
+		proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_version, tvb, offset, 1, ENC_BIG_ENDIAN);
+		offset += 1;
+		offset += 1;	//Skip 0xcb
+		test = tvb_get_guint8(tvb, offset); //Getting IP Prefix
+		offset += 1;
+		if (test == 0x84) {
+			//It's IPv4
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
+			offset += 4;
+		}
+		else if (test == 0x90) {
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
+			offset += 16;
+		}
+		test = tvb_get_guint8(tvb, offset); //Getting UDP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//UDP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting TCP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//TCP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		offset += 1;	//Skip 0xc9
+		test = tvb_get_guint8(tvb, offset);	//Getting IP Prefix
+		offset += 1;
+		if (test == 0x84) {
+			//It's IPv4
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
+			offset += 4;
+		}
+		else if (test == 0x90) {
+			//It's IPv6
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
+			offset += 16;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting UDP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//UDP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting TCP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//TCP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting Expiration Prefix
+		offset += 1;
+		if (test == 0x84) {
+			//Expiration exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		}
 	}
-	proto_tree_add_item(ethereum_tree, hf_ethereum_neighbors_rest, tvb, offset, -1, ENC_BIG_ENDIAN);
-    } else {
-        proto_tree_add_item(ethereum_tree, hf_ethereum_pdu_data, tvb, offset, -1, ENC_BIG_ENDIAN);
-    }
-    return tvb_captured_length(tvb);
+	else if (value == 0x02) {
+		/* This is a Pong Message */
+		offset += 2;	//Skip Prefix
+		test = tvb_get_guint8(tvb, offset); //Getting the IP Prefix
+		offset += 1;
+		if (test == 0x84) {
+			//It's IPv4
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
+			offset += 4;
+		}
+		else if (test == 0x90) {
+			//It's IPv6
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
+			offset += 16;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting the UDP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//UDP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting the TCP Prefix
+		offset += 1;
+		if (test == 0x82) {
+			//TCP exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+			offset += 2;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting the Hash Prefix
+		offset += 1;
+		if (test == 0xa0) {
+			//Hash exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_ping_hash, tvb, offset, 32, ENC_BIG_ENDIAN);
+			offset += 32;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting the Expiration Prefix
+		offset += 1;
+		if (test == 0x84) {
+			//Expiration exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		}
+	}
+	else if (value == 0x03) {
+		offset += 3;	//Skip Prefix
+		test = tvb_get_guint8(tvb, offset);	//Getting the Public key Prefix
+		offset += 1;
+		if (test == 0x40) {
+			//Public key exists
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_target, tvb, offset, 64, ENC_BIG_ENDIAN);
+			offset += 64;
+		}
+		test = tvb_get_guint8(tvb, offset);	//Getting the Expiration Prefix
+		offset += 1;
+		if (test == 0x84) {
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		}
+	}
+	else if (value == 0x04) {
+		//Skip Prefix
+		test = tvb_get_guint8(tvb, offset);	//Get the length of the Overall List bytes length
+		offset += 1;
+		offset += (test - 0xf7);	//Skip the Overall List length byte(s)
+		test = tvb_get_guint8(tvb, offset);	//Get the length of the Node List bytes length
+		offset += 1;
+		offset += (test - 0xf7);	//Skip the Node List length byte(s)
+		proto_item *tiNode;
+		proto_tree *ethdevp2p_node;
+		// Loop continues if have 0xf8, which indicates a list
+		while (tvb_get_guint8(tvb, offset) == 0xf8) {
+			offset += 1;
+			//This packet will not exceed 255 bytes
+			test = tvb_get_guint8(tvb, offset);	//Get the packet length
+			offset += 1;
+			//Add a Node Sub Tree
+			tiNode = proto_tree_add_item(ethdevp2p_packet, proto_ethdevp2p_node, tvb, offset, test, ENC_NA);
+			ethdevp2p_node = proto_item_add_subtree(tiNode, ett_ethdevp2p_packet);
+
+			test = tvb_get_guint8(tvb, offset);	//Get the IP Prefix
+			offset += 1;
+			if (test == 0x84) {
+				//It's IPv4
+				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
+				offset += 4;
+			}
+			else if (test == 0x90) {
+				//It's IPv6
+				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
+				offset += 16;
+			}
+			test = tvb_get_guint8(tvb, offset);	//Get the UDP Prefix
+			offset += 1;
+			if (test == 0x82) {
+				//UDP exists
+				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+				offset += 2;
+			}
+			test = tvb_get_guint8(tvb, offset);	//Get the TCP Prefix
+			offset += 1;
+			if (test == 0x82) {
+				//TCP exists
+				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
+				offset += 2;
+			}
+			offset += 1;	//Skip Prefix
+			test = tvb_get_guint8(tvb, offset);	//Get the Public Key Prefix
+			offset += 1;
+			if (test == 0x40) {
+				//Public key exists
+				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_id, tvb, offset, 64, ENC_BIG_ENDIAN);
+				offset += 64;
+			}
+		}
+		// Node List finished
+		test = tvb_get_guint8(tvb, offset);	//Get Expiration Prefix
+		offset += 1;
+		if (test == 0x84) {
+			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		}
+	} 
+	else {
+		//Error occurs, it's not one of the basic 4 messages
+		proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_data, tvb, offset, -1, ENC_BIG_ENDIAN);
+	}
+	return tvb_captured_length(tvb);
 }
 
-static gboolean
-dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
 	guint   len;
-
+	guint	msn;
 	len = tvb_captured_length(tvb);
 	/* First, make sure we have enough data to do the check. */
 	if (len < MIN_ETHEREUM_LEN) {
@@ -157,19 +306,19 @@ dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 		case 0x01:
 		    offset += 25;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x02:
 		    offset += 47;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x03:
 		    offset += 69;
 			if(len != offset) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		case 0x04:
@@ -177,14 +326,14 @@ dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 			offset += 6;
 			guint    len_per_node = 79;
 			if(len != (nodeNumber * len_per_node + offset)) {
-		        return FALSE
+		        return FALSE;
 			}
 			break;
 		default:
-		    return FALSE
+		    return FALSE;
 	}
-	dissect_ethereum(tvb, pinfo, tree, data _U_);
-	return true;
+	dissect_ethdevp2p(tvb, pinfo, tree, data _U_);
+	return TRUE;
 }
 
 /* register all http trees */
@@ -213,186 +362,220 @@ static int foo_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissec
     return 1;
 }
 
-void proto_register_ethereum(void) {
+void proto_register_ethdevp2p(void) {
 
     static hf_register_info hf[] = {
-	{ &hf_ethereum_pdu_hash,
-	    { "ETHEREUM DEVP2P Hash", "Ethdevp2p.hash",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
+	{ &hf_ethdevp2p_hash,
+	    {"Ethereum Devp2p Hash", "Ethdevp2p.hash",
+	    FT_BYTES, BASE_NONE,
+	    NULL, 0x0,
 	    NULL, HFILL }
-	}, 
+	},
 
-	{ &hf_ethereum_pdu_signature,
-	    { "ETHEREUM DEVP2P Signature", "Ethdevp2p.signature",
-	    FT_BYTES, SEP_SPACE,
+	{ &hf_ethdevp2p_signature,
+	    {"Ethereum Devp2p Signature", "Ethdevp2p.signature",
+	    FT_BYTES, BASE_NONE,
+	    NULL, 0x0,
+	    NULL, HFILL }
+	}
+    };
+
+    static hf_register_info packet[] = {
+	{ &hf_ethdevp2p_packet_type,
+	    {"Ethereum Devp2p Packet Type", "Ethdevp2p.packet-type",
+	    FT_UINT8, BASE_DEC,
+	    VALS(packettypenames), 0x0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_version,
+	    {"Ping Version", "Ping.version",
+	    FT_UINT8, BASE_DEC,
+	    NULL, 0x0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_sender_ipv4,
+	    {"Ping Sender IPv4", "Ping.sender-ipv4",
+	    FT_IPv4, BASE_NONE,
+	    NULL, 0x0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_sender_ipv6,
+		{ "Ping Sender IPv6", "Ping.sender-ipv6",
+		FT_IPv6, BASE_NONE,
+		NULL, 0x0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_sender_udp_port,
+	    { "ping Sender UDP Port", "Ping.sender-udp-port",
+	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_pdu_type,
-	    { "ETHEREUM DEVP2P Type", "Ethdevp2p.type",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	}, 
-
-	{ &hf_ethereum_pdu_data,
-	    { "ETHEREUM DEVP2P Data", "Ethdevp2p.data",
-	    FT_BYTES, SEP_SPACE,
+	{ &hf_ethdevp2p_ping_sender_tcp_port,
+	    { "Ping Sender TCP Port", "Ping.sender-tcp-port",
+	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_version,
-	    { "ETHEREUM DEVP2P Ping Version", "Ethdevp2p.ping.version",
-	    FT_UINT16, BASE_DEC,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_ping_sender_ip,
-	    { "ETHEREUM DEVP2P Ping Sender IP", "Ethdevp2p.ping.sender-ip",
+	{ &hf_ethdevp2p_ping_recipient_ipv4,
+	    { "Ping Recipient IPv4", "Ping.recipient-ipv4",
 	    FT_IPv4, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_sender_udp_port,
-	    { "ETHEREUM DEVP2P Ping Sender UDP Port", "Ethdevp2p.ping.sender-udp-port",
+	{ &hf_ethdevp2p_ping_recipient_ipv6,
+		{ "Ping Recipient IPv6", "Ping.recipient-ipv6",
+		FT_IPv6, BASE_NONE,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_recipient_udp_port,
+	    { "Ping Recipient UDP Port", "Ping.recipient-udp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_sender_tcp_port,
-	    { "ETHEREUM DEVP2P Ping Sender TCP Port", "Ethdevp2p.ping.sender-tcp-port",
-	    FT_UINT32, BASE_DEC,
+	{ &hf_ethdevp2p_ping_recipient_tcp_port,
+		{ "Ping Recipient TCP Port", "Ping.recipient-tcp-port",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_ping_expiration,
+	    { "Ping Expiration", "Ping.expiration",
+	    FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_recipient_ip,
-	    { "ETHEREUM DEVP2P Ping Recipient IP", "Ethdevp2p.ping.recipient-ip",
+	{ &hf_ethdevp2p_pong_recipient_ipv4,
+	    { "Pong Recipient IPv4", "Pong.recipient-ipv4",
 	    FT_IPv4, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_recipient_udp_port,
-	    { "ETHEREUM DEVP2P Ping Recipient UDP Port", "Ethdevp2p.ping.recipient-udp-port",
+	{ &hf_ethdevp2p_pong_recipient_ipv6,
+		{ "Pong Recipient IPv6", "Pong.recipient-ipv6",
+		FT_IPv6, BASE_NONE,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_pong_recipient_udp_port,
+	    { "Pong Recipient UDP Port", "Pong.recipient-udp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_ping_expiration,
-	    { "ETHEREUM DEVP2P Ping Expiration", "Ethdevp2p.ping.expiration",
-	    FT_BYTES, SEP_SPACE,
+	{ &hf_ethdevp2p_pong_recipient_tcp_port,
+	    { "Pong Recipient TCP Port", "Pong.recipient-tcp-port",
+	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_pong_recipient_ip,
-	    { "ETHEREUM DEVP2P Pong Recipient IP", "Ethdevp2p.pong.recipient-ip",
+	{ &hf_ethdevp2p_pong_ping_hash,
+	    { "Pong Ping Hash", "Pong.ping-hash",
+	    FT_BYTES, BASE_NONE,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_pong_expiration,
+	    { "Pong Expiration", "Pong.expiration",
+	    FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_findNode_target,
+	    { "FindNode Target Public Key", "FindNode.target",
+	    FT_BYTES, BASE_NONE,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_findNode_expiration,
+	    { "FindNode Expiration", "FindNode.expiration",
+	    FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_data,
+	    {"Ethereum Devp2p Data", "Ethdevp2p.data",
+	    FT_BYTES, BASE_NONE,
+	    NULL, 0x0,
+	    NULL, HFILL }
+	}
+    };
+
+    static hf_register_info node[] = {
+	{ &hf_ethdevp2p_neighbors_nodes_ipv4,
+	    { "Neighbors Nodes IPv4", "Neighbors.nodes-ipv4",
 	    FT_IPv4, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_pong_recipient_udp_port,
-	    { "ETHEREUM DEVP2P Pong Recipient UDP Port", "Ethdevp2p.pong.recipient-udp-port",
+	{ &hf_ethdevp2p_neighbors_nodes_ipv6,
+		{ "Neighbors Nodes IPv6", "Neighbors.nodes-ipv6",
+		FT_IPv6, BASE_NONE,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_neighbors_nodes_udp_port,
+	    { "Neighbors Nodes UDP Port", "Neighbors.nodes-udp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_pong_recipient_tcp_port,
-	    { "ETHEREUM DEVP2P Pong Recipient TCP Port", "Ethdevp2p.pong.recipient-tcp-port",
+	{ &hf_ethdevp2p_neighbors_nodes_tcp_port,
+	    { "Neighbors Nodes TCP Port", "Neighbors.nodes-tcp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_pong_ping_hash,
-	    { "ETHEREUM DEVP2P Pong Ping Hash", "Ethdevp2p.pong.ping-hash",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-	
-	{ &hf_ethereum_pong_expiration,
-	    { "ETHEREUM DEVP2P Pong Expiration", "Ethdevp2p.pong.expiration",
-	    FT_BYTES, SEP_SPACE,
+	{ &hf_ethdevp2p_neighbors_nodes_id,
+	    { "Neighbors Nodes ID", "Neighbors.nodes-id",
+	    FT_BYTES, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
-	{ &hf_ethereum_findNode_target,
-	    { "ETHEREUM DEVP2P Find Node Target Public Key", "Ethdevp2p.findNode.target",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_findNode_expiration,
-	    { "ETHEREUM DEVP2P Find Node Expiration", "Ethdevp2p.findNode.expiration",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_neighbors_nodes_ip,
-	    { "ETHEREUM DEVP2P Neighbors Nodes IP", "Ethdevp2p.neighbors.nodes-ip",
-	    FT_IPv4, BASE_NONE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_neighbors_nodes_udp_port,
-	    { "ETHEREUM DEVP2P Neighbors Nodes UDP Port", "Ethdevp2p.neighbors.nodes-udp-port",
-	    FT_UINT32, BASE_DEC,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_neighbors_nodes_tcp_port,
-	    { "ETHEREUM DEVP2P Neighbors Nodes TCP Port", "Ethdevp2p.neighbors.nodes-tcp-port",
-	    FT_UINT32, BASE_DEC,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-	
-	{ &hf_ethereum_neighbors_nodes_id,
-	    { "ETHEREUM DEVP2P Neighbors Nodes ID", "Ethdevp2p.neighbors.nodes-id",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_neighbors_expiration,
-	    { "ETHEREUM DEVP2P Neighbors Expiration", "Ethdevp2p.neighbors.expiration",
-	    FT_BYTES, SEP_SPACE,
-	    NULL, 0X0,
-	    NULL, HFILL }
-	},
-
-	{ &hf_ethereum_neighbors_rest,
-	    { "ETHEREUM DEVP2P Neighbors Wrong packet", "Ethdevp2p.neighbors.rest",
-	    FT_BYTES, SEP_SPACE,
+	{ &hf_ethdevp2p_neighbors_expiration,
+	    { "Neighbors Expiration", "Neighbors.expiration",
+	    FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	}
-	
     };
+
 
     /* Setup protocol subtree array */
     static gint *ett[] = {
-	&ett_ethereum
+	&ett_ethdevp2p,
+	&ett_ethdevp2p_packet,
+	&ett_ethdevp2p_node
     };
 
-    proto_ethereum = proto_register_protocol (
-		    "Ethereum devp2p discovery protocol",
+    proto_ethdevp2p = proto_register_protocol (
+		    "Ethereum Devp2p Protocol",
 		    "ETHDEVP2PDISCO",
 		    "ethdevp2pdisco"
 		    );
@@ -406,6 +589,26 @@ void proto_register_ethereum(void) {
 void proto_reg_handoff_ethereum(void) {
     static dissector_handle_t ethereum_handle;
 
-    ethereum_handle = create_dissector_handle(dissect_ethereum, proto_ethereum);
-    dissector_add_uint("udp.port", ETHEREUM_PORT, ethereum_handle);
+    proto_ethdevp2p_packet = proto_register_protocol (
+		    "Ethereum Devp2p Packet",
+		    "ETHDEVP2PPACKET",
+		    "ethdevp2ppacket"
+		    );
+
+    proto_ethdevp2p_node = proto_register_protocol (
+		    "Neighbor Node",
+		    "ETHDEVP2PPNODE",
+		    "ethdevp2pnode"
+		    );
+    heur_subdissector_list = register_heur_dissector_list("ethdevp2p", proto_ethdevp2p);
+    proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
+    proto_register_field_array(proto_ethdevp2p_packet, packet, array_length(packet));
+    proto_register_field_array(proto_ethdevp2p_node, node, array_length(node));
+    proto_register_subtree_array(ett, array_length(ett));
+}
+
+void proto_reg_handoff_ethdevp2p(void) {
+    static dissector_handle_t ethdevp2p_handle;
+    ethdevp2p_handle = create_dissector_handle(dissect_ethdevp2p, proto_ethdevp2p);
+    dissector_add_uint("udp.port", ETHEREUM_PORT, ethdevp2p_handle);
 }

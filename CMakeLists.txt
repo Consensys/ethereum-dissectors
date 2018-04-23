@@ -3,12 +3,19 @@ include(WiresharkPlugin)
 
 set_module_info(devp2p 0 0 0 0)
 
+set(TMPFILE "./BuildInfo.h.tmp")
+set(OUTFILE "./BuildInfo.h")
+
 set(DISSECTOR_SRC
 	packet-ethereum.c
 )
 
 set(PLUGIN_FILES
 	plugin.c
+	common.cpp
+	commonData.cpp
+	FixedHash.cpp
+	RLP.cpp
 	${DISSECTOR_SRC}
 )
 
