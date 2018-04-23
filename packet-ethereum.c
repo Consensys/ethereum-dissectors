@@ -54,8 +54,6 @@ static int hf_ethdevp2p_neighbors_expiration = -1;
 /* Test only */
 static int hf_ethdevp2p_data = -1;
 
-static heur_dissector_list_t heur_subdissector_list;
-
 static int ethereum_tap = -1;
 struct EthereumTap {
     gint packet_type;
@@ -286,57 +284,41 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	return tvb_captured_length(tvb);
 }
 
+
 static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
-	guint   len;
-	guint	msn;
-	len = tvb_captured_length(tvb);
-	/* First, make sure we have enough data to do the check. */
-	if (len < MIN_ETHEREUM_LEN) {
+	guint type;
+	// First, make sure we have enough data to do the check.
+	if (tvb_captured_length(tvb) < MIN_ETHEREUM_LEN) {
 		  return FALSE;
 	}
 
-	msn = tvb_get_ntohs(tvb, 97);
-
-	if (msn != 0x01 && msn != 0x02 && msn != 0x03 && msn != 0x04) {
+	type = tvb_get_guint8(tvb, 97);
+	
+	if (type != 0x01 && type != 0x02 && type != 0x03 && type != 0x04) {
 	  return FALSE;
 	}
-	guint    offset = MIN_ETHEREUM_LEN;
-	switch(msn){
-		case 0x01:
-		    offset += 25;
-			if(len != offset) {
-		        return FALSE;
-			}
-			break;
-		case 0x02:
-		    offset += 47;
-			if(len != offset) {
-		        return FALSE;
-			}
-			break;
-		case 0x03:
-		    offset += 69;
-			if(len != offset) {
-		        return FALSE;
-			}
-			break;
-		case 0x04:
-		    guint    nodeNumber = (tvb_captured_length(tvb) - 151) / 79;
-			offset += 6;
-			guint    len_per_node = 79;
-			if(len != (nodeNumber * len_per_node + offset)) {
-		        return FALSE;
-			}
-			break;
-		default:
-		    return FALSE;
-	}
+	
 	dissect_ethdevp2p(tvb, pinfo, tree, data _U_);
 	return TRUE;
 }
 
-/* register all http trees */
+
+
+// register all http trees
+static void foo_stats_tree_init(stats_tree *st) {
+	st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
+	st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
+}
+
+static int foo_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p) {
+	struct FooTap *pi = (struct FooTap *)p;
+	tick_stat_node(st, st_str_packets, 0, FALSE);
+	stats_tree_tick_pivot(st, st_node_packet_types,
+		val_to_str(pi->packet_type, msgtypevalues, "Unknown packet type (%d)"));
+	return 1;
+}
+
 static void register_foo_stat_trees(void) {
     stats_tree_register_plugin("foo", "foo", "Foo/Packet Types", 0,
         foo_stats_tree_packet, foo_stats_tree_init, NULL);
@@ -347,20 +329,6 @@ WS_DLL_PUBLIC_DEF void plugin_register_tap_listener(void)
     register_foo_stat_trees();
 }
 
-static void foo_stats_tree_init(stats_tree* st)
-{
-    st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
-    st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
-}
-
-static int foo_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p)
-{
-    struct FooTap *pi = (struct FooTap *)p;
-    tick_stat_node(st, st_str_packets, 0, FALSE);
-    stats_tree_tick_pivot(st, st_node_packet_types,
-            val_to_str(pi->packet_type, msgtypevalues, "Unknown packet type (%d)"));
-    return 1;
-}
 
 void proto_register_ethdevp2p(void) {
 
@@ -575,40 +543,32 @@ void proto_register_ethdevp2p(void) {
     };
 
     proto_ethdevp2p = proto_register_protocol (
-		    "Ethereum Devp2p Protocol",
-		    "ETHDEVP2PDISCO",
-		    "ethdevp2pdisco"
-		    );
-	heur_subdissector_list = register_heur_dissector_list("ethereum", proto_ethereum);
-    proto_register_field_array(proto_ethereum, hf, array_length(hf));
-    proto_register_subtree_array(ett, array_length(ett));
-	ethereum_tap = register_tap("ethereum");    
-}
+	    "Ethereum Devp2p Protocol",
+	    "ETHDEVP2PDISCO",
+	    "ethdevp2pdisco"
+	);
 
+	proto_ethdevp2p_packet = proto_register_protocol(
+		"Ethereum Devp2p Packet",
+		"ETHDEVP2PPACKET",
+		"ethdevp2ppacket"
+	);
 
-void proto_reg_handoff_ethereum(void) {
-    static dissector_handle_t ethereum_handle;
-
-    proto_ethdevp2p_packet = proto_register_protocol (
-		    "Ethereum Devp2p Packet",
-		    "ETHDEVP2PPACKET",
-		    "ethdevp2ppacket"
-		    );
-
-    proto_ethdevp2p_node = proto_register_protocol (
-		    "Neighbor Node",
-		    "ETHDEVP2PPNODE",
-		    "ethdevp2pnode"
-		    );
-    heur_subdissector_list = register_heur_dissector_list("ethdevp2p", proto_ethdevp2p);
-    proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
-    proto_register_field_array(proto_ethdevp2p_packet, packet, array_length(packet));
-    proto_register_field_array(proto_ethdevp2p_node, node, array_length(node));
-    proto_register_subtree_array(ett, array_length(ett));
+	proto_ethdevp2p_node = proto_register_protocol(
+		"Neighbor Node",
+		"ETHDEVP2PPNODE",
+		"ethdevp2pnode"
+	);
+	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
+	proto_register_field_array(proto_ethdevp2p_packet, packet, array_length(packet));
+	proto_register_field_array(proto_ethdevp2p_node, node, array_length(node));
+	proto_register_subtree_array(ett, array_length(ett));
+	ethereum_tap = register_tap("ethdevp2p");    
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
     static dissector_handle_t ethdevp2p_handle;
     ethdevp2p_handle = create_dissector_handle(dissect_ethdevp2p, proto_ethdevp2p);
+	heur_dissector_add("udp", dissect_ethdevp2p_heur, "Ethdevp2p disco Over Udp", "Ethdevp2p_udp", proto_ethdevp2p, HEURISTIC_ENABLE);
     dissector_add_uint("udp.port", ETHEREUM_PORT, ethdevp2p_handle);
 }
