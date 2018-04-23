@@ -8,9 +8,7 @@
 /* Sub tree */
 static int proto_ethdevp2p = -1;
 static gint ett_ethdevp2p = -1;
-static int proto_ethdevp2p_packet = -1;
 static gint ett_ethdevp2p_packet = -1;
-static int proto_ethdevp2p_node = -1;
 static gint ett_ethdevp2p_node = -1;
 
 static const value_string packettypenames[] = {
@@ -22,6 +20,7 @@ static const value_string packettypenames[] = {
 
 static int hf_ethdevp2p_hash = -1;
 static int hf_ethdevp2p_signature = -1;
+static int hf_ethdevp2p_packet = -1;
 static int hf_ethdevp2p_packet_type = -1;
 /* For Ping Message */
 static int hf_ethdevp2p_ping_version = -1;
@@ -45,6 +44,7 @@ static int hf_ethdevp2p_pong_expiration = -1;
 static int hf_ethdevp2p_findNode_target = -1;
 static int hf_ethdevp2p_findNode_expiration = -1;
 /* For Neighbors Message */
+static int hf_ethdevp2p_neighbors_node = -1;
 static int hf_ethdevp2p_neighbors_nodes_ipv4 = -1;
 static int hf_ethdevp2p_neighbors_nodes_ipv6 = -1;
 static int hf_ethdevp2p_neighbors_nodes_udp_port = -1;
@@ -53,6 +53,7 @@ static int hf_ethdevp2p_neighbors_nodes_id = -1;
 static int hf_ethdevp2p_neighbors_expiration = -1;
 /* Test only */
 static int hf_ethdevp2p_data = -1;
+
 
 static int ethereum_tap = -1;
 struct EthereumTap {
@@ -63,6 +64,7 @@ static const guint8* st_str_packets = "Total Packets";
 static const guint8* st_str_packet_types = "FOO Packet Types";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
+
 
 static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
 	gint offset = 0;
@@ -79,7 +81,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	offset += 65;
 
 	/* Add Packet Sub Tree */
-	proto_item *tiPacket = proto_tree_add_item(ethdevp2p_tree, proto_ethdevp2p_packet, tvb, offset, -1, ENC_NA);
+	proto_item *tiPacket = proto_tree_add_item(ethdevp2p_tree, hf_ethdevp2p_packet, tvb, offset, -1, ENC_NA);
 	proto_tree *ethdevp2p_packet = proto_item_add_subtree(tiPacket, ett_ethdevp2p_packet);
 
 	/* Packet Type */
@@ -232,7 +234,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 			test = tvb_get_guint8(tvb, offset);	//Get the packet length
 			offset += 1;
 			//Add a Node Sub Tree
-			tiNode = proto_tree_add_item(ethdevp2p_packet, proto_ethdevp2p_node, tvb, offset, test, ENC_NA);
+			tiNode = proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_neighbors_node, tvb, offset, test, ENC_NA);
 			ethdevp2p_node = proto_item_add_subtree(tiNode, ett_ethdevp2p_packet);
 
 			test = tvb_get_guint8(tvb, offset);	//Get the IP Prefix
@@ -284,7 +286,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	return tvb_captured_length(tvb);
 }
 
-
 static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
 	guint type;
@@ -302,7 +303,6 @@ static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_
 	dissect_ethdevp2p(tvb, pinfo, tree, data _U_);
 	return TRUE;
 }
-
 
 
 // register all http trees
@@ -345,10 +345,15 @@ void proto_register_ethdevp2p(void) {
 	    FT_BYTES, BASE_NONE,
 	    NULL, 0x0,
 	    NULL, HFILL }
-	}
-    };
+	},
 
-    static hf_register_info packet[] = {
+	{ &hf_ethdevp2p_packet,
+		{ "Ethereum Devp2p Packet", "Ethdevp2p.packet",
+		FT_NONE, BASE_NONE,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
 	{ &hf_ethdevp2p_packet_type,
 	    {"Ethereum Devp2p Packet Type", "Ethdevp2p.packet-type",
 	    FT_UINT8, BASE_DEC,
@@ -378,7 +383,7 @@ void proto_register_ethdevp2p(void) {
 	},
 
 	{ &hf_ethdevp2p_ping_sender_udp_port,
-	    { "ping Sender UDP Port", "Ping.sender-udp-port",
+	    { "Ping Sender UDP Port", "Ping.sender-udp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
@@ -487,10 +492,15 @@ void proto_register_ethdevp2p(void) {
 	    FT_BYTES, BASE_NONE,
 	    NULL, 0x0,
 	    NULL, HFILL }
-	}
-    };
+	},
 
-    static hf_register_info node[] = {
+	{ &hf_ethdevp2p_neighbors_node,
+		{ "Neighbors Node", "Neighbors.node",
+		FT_NONE, BASE_NONE,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+    
 	{ &hf_ethdevp2p_neighbors_nodes_ipv4,
 	    { "Neighbors Nodes IPv4", "Neighbors.nodes-ipv4",
 	    FT_IPv4, BASE_NONE,
@@ -548,20 +558,7 @@ void proto_register_ethdevp2p(void) {
 	    "ethdevp2pdisco"
 	);
 
-	proto_ethdevp2p_packet = proto_register_protocol(
-		"Ethereum Devp2p Packet",
-		"ETHDEVP2PPACKET",
-		"ethdevp2ppacket"
-	);
-
-	proto_ethdevp2p_node = proto_register_protocol(
-		"Neighbor Node",
-		"ETHDEVP2PPNODE",
-		"ethdevp2pnode"
-	);
 	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
-	proto_register_field_array(proto_ethdevp2p_packet, packet, array_length(packet));
-	proto_register_field_array(proto_ethdevp2p_node, node, array_length(node));
 	proto_register_subtree_array(ett, array_length(ett));
 	ethereum_tap = register_tap("ethdevp2p");    
 }
