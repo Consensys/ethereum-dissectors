@@ -37,6 +37,16 @@ static int hf_ethereum_neighbors_rest = -1;
 
 static heur_dissector_list_t heur_subdissector_list;
 
+static int ethereum_tap = -1;
+struct EthereumTap {
+    gint packet_type;
+    gint priority;
+};
+static const guint8* st_str_packets = "Total Packets";
+static const guint8* st_str_packet_types = "FOO Packet Types";
+static int st_node_packets = -1;
+static int st_node_packet_types = -1;
+
 
 
 static gint ett_ethereum = -1;
@@ -175,6 +185,32 @@ dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 	}
 	dissect_ethereum(tvb, pinfo, tree, data _U_);
 	return true;
+}
+
+/* register all http trees */
+static void register_foo_stat_trees(void) {
+    stats_tree_register_plugin("foo", "foo", "Foo/Packet Types", 0,
+        foo_stats_tree_packet, foo_stats_tree_init, NULL);
+}
+
+WS_DLL_PUBLIC_DEF void plugin_register_tap_listener(void)
+{
+    register_foo_stat_trees();
+}
+
+static void foo_stats_tree_init(stats_tree* st)
+{
+    st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
+    st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
+}
+
+static int foo_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p)
+{
+    struct FooTap *pi = (struct FooTap *)p;
+    tick_stat_node(st, st_str_packets, 0, FALSE);
+    stats_tree_tick_pivot(st, st_node_packet_types,
+            val_to_str(pi->packet_type, msgtypevalues, "Unknown packet type (%d)"));
+    return 1;
 }
 
 void proto_register_ethereum(void) {
@@ -362,8 +398,10 @@ void proto_register_ethereum(void) {
 		    );
 	heur_subdissector_list = register_heur_dissector_list("ethereum", proto_ethereum);
     proto_register_field_array(proto_ethereum, hf, array_length(hf));
-    proto_register_subtree_array(ett, array_length(ett));    
+    proto_register_subtree_array(ett, array_length(ett));
+	ethereum_tap = register_tap("ethereum");    
 }
+
 
 void proto_reg_handoff_ethereum(void) {
     static dissector_handle_t ethereum_handle;
