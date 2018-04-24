@@ -1,11 +1,8 @@
 #include "config.h"
 
-#include <gmodule.h>
-
 #include <epan/packet.h>
 #include <epan/tap.h>
 #include <epan/stats_tree.h>
-
 
 #define ETHEREUM_PORT 30303
 #define MIN_ETHEREUM_LEN 98
@@ -69,7 +66,6 @@ static const guint8* st_str_packets = "Total Packets";
 static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
-
 
 static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
 	struct Ethdevp2pTap *ethdevp2pInfo;
@@ -313,14 +309,12 @@ static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_
 	return TRUE;
 }
 
-
 // register all http trees
 
 static void ethdevp2p_stats_tree_init(stats_tree *st) {
 	st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
 	st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
 }
-
 
 static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p) {
 	struct Ethdevp2pTap *pi = (struct Ethdevp2pTap *)p;
@@ -331,15 +325,8 @@ static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_
 }
 
 static void register_ethdevp2p_stat_trees(void) {
-    stats_tree_register_plugin("ETHDEVP2PDISCO", "ethdevp2pdisco", "Ethdevp2p/Packet Types", 0,
+    stats_tree_register_plugin("ethdevp2p_tap", "ethdevp2pdisco", "Ethdevp2p/Packet Types", 0,
         ethdevp2p_stats_tree_packet, ethdevp2p_stats_tree_init, NULL);
-}
-
-WS_DLL_PUBLIC_DEF const gchar version[] = "0.0";
-
-WS_DLL_PUBLIC_DEF void plugin_register_tap_listener(void)
-{
-    register_ethdevp2p_stat_trees();
 }
 
 void proto_register_ethdevp2p(void) {
@@ -572,7 +559,8 @@ void proto_register_ethdevp2p(void) {
 
 	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
 	proto_register_subtree_array(ett, array_length(ett));
-	ethdevp2p_tap = register_tap("ethdevp2p");
+	ethdevp2p_tap = register_tap("ethdevp2p_tap");
+	register_ethdevp2p_stat_trees();
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
