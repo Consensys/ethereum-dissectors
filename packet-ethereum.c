@@ -1,6 +1,11 @@
 #include "config.h"
 
+#include <gmodule.h>
+
 #include <epan/packet.h>
+#include <epan/tap.h>
+#include <epan/stats_tree.h>
+
 
 #define ETHEREUM_PORT 30303
 #define MIN_ETHEREUM_LEN 98
@@ -55,18 +60,20 @@ static int hf_ethdevp2p_neighbors_expiration = -1;
 static int hf_ethdevp2p_data = -1;
 
 
-static int ethereum_tap = -1;
-struct EthereumTap {
+static int ethdevp2p_tap = -1;
+struct Ethdevp2pTap {
     gint packet_type;
-    gint priority;
 };
+
 static const guint8* st_str_packets = "Total Packets";
-static const guint8* st_str_packet_types = "FOO Packet Types";
+static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
 
 
 static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
+	struct Ethdevp2pTap *ethdevp2pInfo;
+	ethdevp2pInfo = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pTap));
 	gint offset = 0;
 	guint test;
 	col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PDISCO");
@@ -88,6 +95,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	/* Get the Packet Type */
 	guint value;
 	value = tvb_get_guint8(tvb, offset);
+	ethdevp2pInfo->packet_type = value;
 
 	/* Add the Packet Type to the Sub Tree */
 	proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_packet_type, tvb, offset, 1, ENC_BIG_ENDIAN);
@@ -283,6 +291,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		//Error occurs, it's not one of the basic 4 messages
 		proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_data, tvb, offset, -1, ENC_BIG_ENDIAN);
 	}
+	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
 	return tvb_captured_length(tvb);
 }
 
@@ -306,29 +315,32 @@ static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_
 
 
 // register all http trees
-static void foo_stats_tree_init(stats_tree *st) {
+
+static void ethdevp2p_stats_tree_init(stats_tree *st) {
 	st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
 	st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
 }
 
-static int foo_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p) {
-	struct FooTap *pi = (struct FooTap *)p;
+
+static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p) {
+	struct Ethdevp2pTap *pi = (struct Ethdevp2pTap *)p;
 	tick_stat_node(st, st_str_packets, 0, FALSE);
 	stats_tree_tick_pivot(st, st_node_packet_types,
-		val_to_str(pi->packet_type, msgtypevalues, "Unknown packet type (%d)"));
+		val_to_str(pi->packet_type, packettypenames, "Unknown packet type (%d)"));
 	return 1;
 }
 
-static void register_foo_stat_trees(void) {
-    stats_tree_register_plugin("foo", "foo", "Foo/Packet Types", 0,
-        foo_stats_tree_packet, foo_stats_tree_init, NULL);
+static void register_ethdevp2p_stat_trees(void) {
+    stats_tree_register_plugin("ETHDEVP2PDISCO", "ethdevp2pdisco", "Ethdevp2p/Packet Types", 0,
+        ethdevp2p_stats_tree_packet, ethdevp2p_stats_tree_init, NULL);
 }
+
+WS_DLL_PUBLIC_DEF const gchar version[] = "0.0";
 
 WS_DLL_PUBLIC_DEF void plugin_register_tap_listener(void)
 {
-    register_foo_stat_trees();
+    register_ethdevp2p_stat_trees();
 }
-
 
 void proto_register_ethdevp2p(void) {
 
@@ -560,7 +572,7 @@ void proto_register_ethdevp2p(void) {
 
 	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
 	proto_register_subtree_array(ett, array_length(ett));
-	ethereum_tap = register_tap("ethdevp2p");    
+	ethdevp2p_tap = register_tap("ethdevp2p");
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
