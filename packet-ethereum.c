@@ -56,13 +56,15 @@ static int hf_ethdevp2p_neighbors_nodes_udp_port = -1;
 static int hf_ethdevp2p_neighbors_nodes_tcp_port = -1;
 static int hf_ethdevp2p_neighbors_nodes_id = -1;
 static int hf_ethdevp2p_neighbors_expiration = -1;
+static int hf_ethdevp2p_node_lenght = -1;
 /* Test only */
 static int hf_ethdevp2p_data = -1;
 
 
 static int ethdevp2p_tap = -1;
-struct Ethdevp2pTap {
+struct EthereumTap {
     gint packet_type;
+	gint numbnodes;
 };
 
 static const guint8* st_str_packets = "Total Packets";
@@ -102,6 +104,8 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	offset += 1;
 
 	if (value == 0x01) {
+		ethdevp2pInfo.packet_type = 0x01;
+		ethdevp2pInfo.numbnodes = -1;
 		/* This is a Ping Message */
 		offset += 1;	//Skip Prefix
 		//Getting Ping Version
@@ -168,6 +172,8 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		}
 	}
 	else if (value == 0x02) {
+		ethdevp2pInfo.packet_type = 0x02;
+		ethdevp2pInfo.numbnodes = -1;
 		/* This is a Pong Message */
 		offset += 2;	//Skip Prefix
 		test = tvb_get_guint8(tvb, offset); //Getting the IP Prefix
@@ -211,6 +217,8 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		}
 	}
 	else if (value == 0x03) {
+		ethdevp2pInfo.packet_type = 0x03;
+		ethdevp2pInfo.numbnodes = -1;
 		offset += 3;	//Skip Prefix
 		test = tvb_get_guint8(tvb, offset);	//Getting the Public key Prefix
 		offset += 1;
@@ -227,6 +235,9 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	else if (value == 0x04) {
 		//Skip Prefix
+		ethdevp2pInfo.packet_type = 0x04;
+		ethdevp2pInfo.numbnodes = (tvb_captured_length(tvb) - 151) / 79;
+		hf_ethdevp2p_node_lenght = (tvb_captured_length(tvb) - 151) / 79;
 		test = tvb_get_guint8(tvb, offset);	//Get the length of the Overall List bytes length
 		offset += 1;
 		offset += (test - 0xf7);	//Skip the Overall List length byte(s)
@@ -337,7 +348,7 @@ static void register_ethdevp2p_stat_trees(void) {
 
 WS_DLL_PUBLIC_DEF const gchar version[] = "0.0";
 
-WS_DLL_PUBLIC_DEF void plugin_register_tap_listener(void)
+WS_DLL_PUBLIC_DEF void register_tap_listener(void)
 {
     register_ethdevp2p_stat_trees();
 }
@@ -500,60 +511,67 @@ void proto_register_ethdevp2p(void) {
 	},
 
 	{ &hf_ethdevp2p_data,
-	    {"Ethereum Devp2p Data", "Ethdevp2p.data",
+	    {"Ethereum Devp2p Data", "ethdevp2pdisco.data",
 	    FT_BYTES, BASE_NONE,
 	    NULL, 0x0,
 	    NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_node,
-		{ "Neighbors Node", "Neighbors.node",
+		{ "Neighbors Node", "ethdevp2pdisco.node",
 		FT_NONE, BASE_NONE,
 		NULL, 0X0,
 		NULL, HFILL }
 	},
     
 	{ &hf_ethdevp2p_neighbors_nodes_ipv4,
-	    { "Neighbors Nodes IPv4", "Neighbors.nodes-ipv4",
+	    { "Neighbors Nodes IPv4", "ethdevp2pdisco.nodes-ipv4",
 	    FT_IPv4, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_nodes_ipv6,
-		{ "Neighbors Nodes IPv6", "Neighbors.nodes-ipv6",
+		{ "Neighbors Nodes IPv6", "ethdevp2pdisco.nodes-ipv6",
 		FT_IPv6, BASE_NONE,
 		NULL, 0X0,
 		NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_nodes_udp_port,
-	    { "Neighbors Nodes UDP Port", "Neighbors.nodes-udp-port",
+	    { "Neighbors Nodes UDP Port", "ethdevp2pdisco.nodes-udp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_nodes_tcp_port,
-	    { "Neighbors Nodes TCP Port", "Neighbors.nodes-tcp-port",
+	    { "Neighbors Nodes TCP Port", "ethdevp2pdisco.nodes-tcp-port",
 	    FT_UINT32, BASE_DEC,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_nodes_id,
-	    { "Neighbors Nodes ID", "Neighbors.nodes-id",
+	    { "Neighbors Nodes ID", "ethdevp2pdisco.nodes-id",
 	    FT_BYTES, BASE_NONE,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	},
 
 	{ &hf_ethdevp2p_neighbors_expiration,
-	    { "Neighbors Expiration", "Neighbors.expiration",
+	    { "Neighbors Expiration", "ethdevp2pdisco.expiration",
 	    FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL,
 	    NULL, 0X0,
 	    NULL, HFILL }
 	}
+
+	{ &hf_ethdevp2p_node_lenght,
+	    { "Node Lenght", "ethdevp2pdisco.node.lenght",
+	    FT_UINT32, BASE_DEC,
+	    NULL, 0X0,
+	    NULL, HFILL }
+	},
     };
 
 
