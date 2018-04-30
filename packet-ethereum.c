@@ -4,8 +4,8 @@
 #include <epan/tap.h>
 #include <epan/stats_tree.h>
 
-#define ETHEREUM_PORT 30303
-#define MIN_ETHEREUM_LEN 98
+#define MIN_ETHDEVP2PDISCO_LEN 98
+#define MAX_ETHDEVP2PDISCO_LEN 1280
 
 /* Sub tree */
 static int proto_ethdevp2p = -1;
@@ -56,6 +56,15 @@ static int hf_ethdevp2p_neighbors_expiration = -1;
 /* Test only */
 static int hf_ethdevp2p_data = -1;
 
+struct UnitData {
+	gint offset;
+	gint length;
+};
+
+struct PacketContent {
+	gint dataCount;
+	struct UnitData *data_list;
+};
 
 static int ethdevp2p_tap = -1;
 struct Ethdevp2pTap {
@@ -67,11 +76,97 @@ static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
 
-static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_) {
+static int rlp_decode(tvbuff_t *tvb, struct PacketContent *packet_content) {
+	gint offset = 0;
+	offset += 97;	//Skip Hash and Signature, checks packet data only
+	gint length = tvb_captured_length(tvb);
+	gint prefix;
+	gint flag;	//Trigger to indicates if a new unit data is detected
+	while (offset < length) {
+		flag = 0;
+		prefix = tvb_get_guint8(tvb, offset);
+		if (prefix >= 0x00 && prefix <= 0x7f) {
+			//data is prefix it self
+			packet_content->data_list[packet_content->dataCount].offset = offset;
+			packet_content->data_list[packet_content->dataCount].length = 1;
+			offset += 1;	//Skip the packet
+			flag = 1;
+		}
+		else if (prefix >= 0x80 && prefix <= 0xb7) {
+			//A string less than 55 bytes long
+			offset += 1;	//Skip the prefix
+			packet_content->data_list[packet_content->dataCount].offset = offset;
+			packet_content->data_list[packet_content->dataCount].length = prefix - 0x80;
+			offset += prefix - 0x80;	//Skip the packet
+			flag = 1;
+		}
+		else if (prefix >= 0xb8 && prefix <= 0xbf) {
+			//A string more than 55 bytes long
+			offset += 1;	//Skip the prefix
+			switch (prefix - 0xb7) {
+			case 1:
+				packet_content->data_list[packet_content->dataCount].length = tvb_get_guint8(tvb, offset);
+				offset += 1;
+				break;
+			case 2:
+				packet_content->data_list[packet_content->dataCount].length = tvb_get_guint16(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 2;
+				break;
+			case 3:
+				packet_content->data_list[packet_content->dataCount].length = tvb_get_guint24(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 3;
+				break;
+			case 4:
+				packet_content->data_list[packet_content->dataCount].length = tvb_get_guint32(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 4;
+				break;
+			case 5:
+				packet_content->data_list[packet_content->dataCount].length = (guint32)tvb_get_guint40(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 5;
+				break;
+			case 6:
+				packet_content->data_list[packet_content->dataCount].length = (guint32)tvb_get_guint48(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 6;
+				break;
+			case 7:
+				packet_content->data_list[packet_content->dataCount].length = (guint32)tvb_get_guint56(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 7;
+				break;
+			case 8:
+				packet_content->data_list[packet_content->dataCount].length = (guint32)tvb_get_guint64(tvb, offset, ENC_BIG_ENDIAN);
+				offset += 8;
+				break;
+			}
+			packet_content->data_list[packet_content->dataCount].offset = offset;
+			offset += packet_content->data_list[packet_content->dataCount].length;	//Skip the packet
+			flag = 1;
+		}
+		else if (prefix >= 0xc0 && prefix <= 0xf7) {
+			//A list less than 55 bytes long
+			offset += 1;	//Skip the prefix
+		}
+		else if (prefix >= 0xf8 && prefix <= 0xff) {
+			//A list more than 55 bytes long
+			offset += 1;	//Skip the prefix
+			offset += prefix - 0xf7;	//Skip the length
+		}
+		else {
+			//Not RLP encoded messsage
+			return 1;
+		}
+		if (flag) {
+			packet_content->dataCount++;
+			packet_content->data_list = wmem_realloc(wmem_packet_scope(), packet_content->data_list,
+				sizeof(struct UnitData) * (packet_content->dataCount + 1));
+		}
+	}
+	return 0;
+}
+
+static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_, struct PacketContent *packet_content) {
 	struct Ethdevp2pTap *ethdevp2pInfo;
 	ethdevp2pInfo = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pTap));
 	gint offset = 0;
-	guint test;
 	col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PDISCO");
 	col_clear(pinfo->cinfo, COL_INFO);
 
@@ -92,220 +187,452 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	guint value;
 	value = tvb_get_guint8(tvb, offset);
 	ethdevp2pInfo->packet_type = value;
-
 	/* Add the Packet Type to the Sub Tree */
 	proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_packet_type, tvb, offset, 1, ENC_BIG_ENDIAN);
-	offset += 1;
+	gint currentData = 1;
 
+	//This is a Ping message
 	if (value == 0x01) {
-		/* This is a Ping Message */
-		offset += 1;	//Skip Prefix
-		//Getting Ping Version
-		proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_version, tvb, offset, 1, ENC_BIG_ENDIAN);
-		offset += 1;
-		offset += 1;	//Skip 0xcb
-		test = tvb_get_guint8(tvb, offset); //Getting IP Prefix
-		offset += 1;
-		if (test == 0x84) {
-			//It's IPv4
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
-			offset += 4;
+		currentData = 1;
+		//Get Ping version
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 1) {
+				//It's Ping version
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_version, tvb,
+					packet_content->data_list[currentData].offset, 1, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
 		}
-		else if (test == 0x90) {
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
-			offset += 16;
+		//Get sender IP address
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's IPv4
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv4, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else if (packet_content->data_list[currentData].length == 16) {
+				//It's IPv6
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_ipv6, tvb,
+					packet_content->data_list[currentData].offset, 16, ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset); //Getting UDP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//UDP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
+		//Get sender UDP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 2) {
+				//It's sender UDP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_udp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting TCP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//TCP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
+		//Get sender TCP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 0) {
+				//Optional TCP port missed
+				currentData++;
+			} 
+			else if (packet_content->data_list[currentData].length == 2) {
+				//It's sender TCP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_sender_tcp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		offset += 1;	//Skip 0xc9
-		test = tvb_get_guint8(tvb, offset);	//Getting IP Prefix
-		offset += 1;
-		if (test == 0x84) {
-			//It's IPv4
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
-			offset += 4;
+		//Get recipient IP address
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's IPv4
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv4, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else if (packet_content->data_list[currentData].length == 16) {
+				//It's IPv6
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv6, tvb,
+					packet_content->data_list[currentData].offset, 16, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		else if (test == 0x90) {
-			//It's IPv6
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
-			offset += 16;
+		//Get recipient UDP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 2) {
+				//It's recipient UDP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_udp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting UDP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//UDP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
+		//Get recipient TCP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 0) {
+				//Optional TCP port missed
+				currentData++;
+			} 
+			else if (packet_content->data_list[currentData].length == 2) {
+				//It's recipient TCP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_tcp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting TCP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//TCP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_recipient_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
-		}
-		test = tvb_get_guint8(tvb, offset);	//Getting Expiration Prefix
-		offset += 1;
-		if (test == 0x84) {
-			//Expiration exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		//Get expiration
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's expiration
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_ping_expiration, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+				currentData++;
+			} 
+			else {
+				//Not valid packet
+				return 1;
+			}
+		} 
+		else {
+			//Not valid packet
+			return 1;
 		}
 	}
+	//This is a Pong message	
 	else if (value == 0x02) {
-		/* This is a Pong Message */
-		offset += 2;	//Skip Prefix
-		test = tvb_get_guint8(tvb, offset); //Getting the IP Prefix
-		offset += 1;
-		if (test == 0x84) {
-			//It's IPv4
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
-			offset += 4;
+		//Get recipient IP address
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's IPv4
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv4, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else if (packet_content->data_list[currentData].length == 16) {
+				//It's IPv6
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv6, tvb,
+					packet_content->data_list[currentData].offset, 16, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
 		}
-		else if (test == 0x90) {
-			//It's IPv6
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
-			offset += 16;
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting the UDP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//UDP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
+		//Get recipient UDP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 2) {
+				//It's recipient UDP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_udp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting the TCP Prefix
-		offset += 1;
-		if (test == 0x82) {
-			//TCP exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-			offset += 2;
+		else {
+			//Not valid packet
+			return 1;
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting the Hash Prefix
-		offset += 1;
-		if (test == 0xa0) {
-			//Hash exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_ping_hash, tvb, offset, 32, ENC_BIG_ENDIAN);
-			offset += 32;
+		//Get recipient TCP port
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 0) {
+				//Optional TCP port missed
+				currentData++;
+			}
+			else if (packet_content->data_list[currentData].length == 2) {
+				//It's recipient TCP port
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_recipient_tcp_port, tvb,
+					packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting the Expiration Prefix
-		offset += 1;
-		if (test == 0x84) {
-			//Expiration exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		else {
+			//Not valid packet
+			return 1;
+		}
+		//Get hash
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 32) {
+				//It's expiration
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_ping_hash, tvb,
+					packet_content->data_list[currentData].offset, 32, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		}
+		else {
+			//Not valid packet
+			return 1;
+		}
+		//Get expiration
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's expiration
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_expiration, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		}
+		else {
+			//Not valid packet
+			return 1;
 		}
 	}
+	//This is a FindNode message
 	else if (value == 0x03) {
-		offset += 3;	//Skip Prefix
-		test = tvb_get_guint8(tvb, offset);	//Getting the Public key Prefix
-		offset += 1;
-		if (test == 0x40) {
-			//Public key exists
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_target, tvb, offset, 64, ENC_BIG_ENDIAN);
-			offset += 64;
+		//Get public key
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 64) {
+				//It's IPv4
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_target, tvb,
+					packet_content->data_list[currentData].offset, 64, ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
 		}
-		test = tvb_get_guint8(tvb, offset);	//Getting the Expiration Prefix
-		offset += 1;
-		if (test == 0x84) {
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		else {
+			//Not valid packet
+			return 1;
+		}
+		//Get expiration
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's expiration
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_expiration, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
+		}
+		else {
+			//Not valid packet
+			return 1;
 		}
 	}
+	//This is a Neighbour message
 	else if (value == 0x04) {
-		//Skip Prefix
-		test = tvb_get_guint8(tvb, offset);	//Get the length of the Overall List bytes length
-		offset += 1;
-		offset += (test - 0xf7);	//Skip the Overall List length byte(s)
-		test = tvb_get_guint8(tvb, offset);	//Get the length of the Node List bytes length
-		offset += 1;
-		offset += (test - 0xf7);	//Skip the Node List length byte(s)
 		proto_item *tiNode;
 		proto_tree *ethdevp2p_node;
-		// Loop continues if have 0xf8, which indicates a list
-		while (tvb_get_guint8(tvb, offset) == 0xf8) {
-			offset += 1;
-			//This packet will not exceed 255 bytes
-			test = tvb_get_guint8(tvb, offset);	//Get the packet length
-			offset += 1;
+		//Get a list of nodes
+		for (currentData = 1; currentData < packet_content->dataCount - 1; currentData++) {
 			//Add a Node Sub Tree
-			tiNode = proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_neighbors_node, tvb, offset, test, ENC_NA);
-			ethdevp2p_node = proto_item_add_subtree(tiNode, ett_ethdevp2p_packet);
-
-			test = tvb_get_guint8(tvb, offset);	//Get the IP Prefix
-			offset += 1;
-			if (test == 0x84) {
-				//It's IPv4
-				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv4, tvb, offset, 4, ENC_BIG_ENDIAN);
-				offset += 4;
+			//At least one node exists
+			if (packet_content->dataCount > currentData + 4) {
+				tiNode = proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_neighbors_node, tvb,
+					packet_content->data_list[currentData].offset - 1,
+					packet_content->data_list[currentData + 4].offset - packet_content->data_list[currentData].offset, ENC_NA);
+				ethdevp2p_node = proto_item_add_subtree(tiNode, ett_ethdevp2p_packet);
+				//Get neighbor node IP address
+				if (packet_content->dataCount > currentData) {
+					if (packet_content->data_list[currentData].length == 4) {
+						//It's IPv4
+						proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv4, tvb,
+							packet_content->data_list[currentData].offset, 4, ENC_BIG_ENDIAN);
+						currentData++;
+					}
+					else if (packet_content->data_list[currentData].length == 16) {
+						//It's IPv6
+						proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv6, tvb,
+							packet_content->data_list[currentData].offset, 16, ENC_BIG_ENDIAN);
+						currentData++;
+					}
+					else {
+						//Not valid packet
+						return 1;
+					}
+				}
+				else {
+					//Not valid packet
+					return 1;
+				}
+				//Get neighbor node UDP port
+				if (packet_content->dataCount > currentData) {
+					if (packet_content->data_list[currentData].length == 2) {
+						//It's node UDP port
+						proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_udp_port, tvb,
+							packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+						currentData++;
+					}
+					else {
+						//Not valid packet
+						return 1;
+					}
+				}
+				else {
+					//Not valid packet
+					return 1;
+				}
+				//Get neighbor node TCP port
+				if (packet_content->dataCount > currentData) {
+					if (packet_content->data_list[currentData].length == 0) {
+						//Optional TCP port missed
+						currentData++;
+					}
+					else if (packet_content->data_list[currentData].length == 2) {
+						//It's node TCP port
+						proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_tcp_port, tvb,
+							packet_content->data_list[currentData].offset, 2, ENC_BIG_ENDIAN);
+						currentData++;
+					}
+					else {
+						//Not valid packet
+						return 1;
+					}
+				}
+				else {
+					//Not valid packet
+					return 1;
+				}
+				//Get neighbor node Public key
+				if (packet_content->dataCount > currentData) {
+					if (packet_content->data_list[currentData].length == 64) {
+						//It's public key
+						proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_id, tvb,
+							packet_content->data_list[currentData].offset, 64, ENC_BIG_ENDIAN);
+					}
+					else {
+						//Not valid packet
+						return 1;
+					}
+				}
+				else {
+					//Not valid packet
+					return 1;
+				}
 			}
-			else if (test == 0x90) {
-				//It's IPv6
-				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_ipv6, tvb, offset, 16, ENC_BIG_ENDIAN);
-				offset += 16;
-			}
-			test = tvb_get_guint8(tvb, offset);	//Get the UDP Prefix
-			offset += 1;
-			if (test == 0x82) {
-				//UDP exists
-				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_udp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-				offset += 2;
-			}
-			test = tvb_get_guint8(tvb, offset);	//Get the TCP Prefix
-			offset += 1;
-			if (test == 0x82) {
-				//TCP exists
-				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_tcp_port, tvb, offset, 2, ENC_BIG_ENDIAN);
-				offset += 2;
-			}
-			offset += 1;	//Skip Prefix
-			test = tvb_get_guint8(tvb, offset);	//Get the Public Key Prefix
-			offset += 1;
-			if (test == 0x40) {
-				//Public key exists
-				proto_tree_add_item(ethdevp2p_node, hf_ethdevp2p_neighbors_nodes_id, tvb, offset, 64, ENC_BIG_ENDIAN);
-				offset += 64;
+			else {
+				//Not valid packet
+				return 1;
 			}
 		}
-		// Node List finished
-		test = tvb_get_guint8(tvb, offset);	//Get Expiration Prefix
-		offset += 1;
-		if (test == 0x84) {
-			proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_findNode_expiration, tvb, offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+		//Get expiration
+		if (packet_content->dataCount > currentData) {
+			if (packet_content->data_list[currentData].length == 4) {
+				//It's expiration
+				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_neighbors_expiration, tvb,
+					packet_content->data_list[currentData].offset, 4, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+				currentData++;
+			}
+			else {
+				//Not valid packet
+				return 1;
+			}
 		}
-	} 
+		else {
+			//Not valid packet
+			return 1;
+		}
+	}
+	//This is not a valid message	
 	else {
-		//Error occurs, it's not one of the basic 4 messages
-		proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_data, tvb, offset, -1, ENC_BIG_ENDIAN);
+		//Not valid packet
+		return 1;
 	}
 	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
-	return tvb_captured_length(tvb);
+	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
+	return 0;
 }
 
 static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
-	guint type;
 	// First, make sure we have enough data to do the check.
-	if (tvb_captured_length(tvb) < MIN_ETHEREUM_LEN) {
+	if (tvb_captured_length(tvb) < MIN_ETHDEVP2PDISCO_LEN || tvb_captured_length(tvb) > MAX_ETHDEVP2PDISCO_LEN) {
 		  return FALSE;
 	}
-
-	type = tvb_get_guint8(tvb, 97);
-	
-	if (type != 0x01 && type != 0x02 && type != 0x03 && type != 0x04) {
-	  return FALSE;
+	// Check if it is rlp encoded
+	struct PacketContent *packet_content;
+	packet_content = wmem_alloc(wmem_packet_scope(), sizeof(struct PacketContent));
+	packet_content->dataCount = 0;
+	packet_content->data_list = wmem_alloc(wmem_packet_scope(), sizeof(struct UnitData));
+	if (rlp_decode(tvb, packet_content)) {
+		wmem_free(wmem_packet_scope(), packet_content->data_list);
+		wmem_free(wmem_packet_scope(), packet_content);
+		return FALSE;
 	}
-	
-	dissect_ethdevp2p(tvb, pinfo, tree, data _U_);
+	if (dissect_ethdevp2p(tvb, pinfo, tree, data _U_, packet_content) == 1) {
+		//This is not a valid message
+		wmem_free(wmem_packet_scope(), packet_content->data_list);
+		wmem_free(wmem_packet_scope(), packet_content);
+		return FALSE;
+	}
+	wmem_free(wmem_packet_scope(), packet_content->data_list);
+	wmem_free(wmem_packet_scope(), packet_content);
 	return TRUE;
 }
 
@@ -564,8 +891,5 @@ void proto_register_ethdevp2p(void) {
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
-    static dissector_handle_t ethdevp2p_handle;
-    ethdevp2p_handle = create_dissector_handle(dissect_ethdevp2p, proto_ethdevp2p);
 	heur_dissector_add("udp", dissect_ethdevp2p_heur, "Ethdevp2p disco Over Udp", "Ethdevp2p_udp", proto_ethdevp2p, HEURISTIC_ENABLE);
-    dissector_add_uint("udp.port", ETHEREUM_PORT, ethdevp2p_handle);
 }
