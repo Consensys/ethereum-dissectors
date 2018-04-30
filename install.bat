@@ -1,5 +1,6 @@
 ECHO OFF
-mkdir -p C:\Development\Wireshark\plugins\epan\devp2p
+set /p wireshark="enter wireshark source root"
+mkdir -p %wireshark%\plugins\epan\devp2p
 copy packet-ethereum.c C:\Development\Wireshark\plugins\epan\devp2p\.
 copy CMakeLists.txt C:\Development\Wireshark\plugins\epan\devp2p\.
 copy Makefile.am C:\Development\Wireshark\plugins\epan\devp2p\.
