@@ -3,9 +3,12 @@
 #include <epan/packet.h>
 #include <epan/tap.h>
 #include <epan/stats_tree.h>
+#include <epan/conversation.h>
 
 #define MIN_ETHDEVP2PDISCO_LEN 98
 #define MAX_ETHDEVP2PDISCO_LEN 1280
+
+static dissector_handle_t ethdevp2pdisco_handle;
 
 /* Sub tree */
 static int proto_ethdevp2p = -1;
@@ -56,6 +59,7 @@ static int hf_ethdevp2p_neighbors_nodes_id = -1;
 static int hf_ethdevp2p_neighbors_expiration = -1;
 static int hf_ethdevp2p_neighbors_nodes_number = -1;
 
+//For RLP decoding
 struct UnitData {
 	gint offset;
 	gint length;
@@ -66,9 +70,16 @@ struct PacketContent {
 	struct UnitData *data_list;
 };
 
+//For Tap
 static int ethdevp2p_tap = -1;
+
 struct Ethdevp2pTap {
     gint packet_type;
+};
+
+//For conversation
+struct Ethdevp2pConversation {
+	gint packet_type;
 };
 
 static const guint8* st_str_packets = "Total Packets";
@@ -164,6 +175,14 @@ static int rlp_decode(tvbuff_t *tvb, struct PacketContent *packet_content) {
 }
 
 static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_, struct PacketContent *packet_content) {
+	//For conversation
+	conversation_t *conversation;
+	conversation = find_or_create_conversation(pinfo);
+	struct Ethdevp2pConversation *ethdevp2pConversation;
+	ethdevp2pConversation = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pConversation));
+	conversation_set_dissector(conversation, ethdevp2pdisco_handle);
+	conversation_add_proto_data(conversation, proto_ethdevp2p, ethdevp2pConversation);
+	//For tap
 	struct Ethdevp2pTap *ethdevp2pInfo;
 	ethdevp2pInfo = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pTap));
 	gint offset = 0;
@@ -187,6 +206,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	guint value;
 	value = tvb_get_guint8(tvb, offset);
 	ethdevp2pInfo->packet_type = value;
+	ethdevp2pConversation->packet_type = value;
 	/* Add the Packet Type to the Sub Tree */
 	proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_packet_type, tvb, offset, 1, ENC_BIG_ENDIAN);
 	gint currentData = 1;
@@ -614,6 +634,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
 	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
+	wmem_free(wmem_packet_scope(), ethdevp2pConversation);
 	return 0;
 }
 
@@ -893,6 +914,7 @@ void proto_register_ethdevp2p(void) {
 	    "ethdevp2pdisco"
 	);
 
+	ethdevp2pdisco_handle = create_dissector_handle(dissect_ethdevp2p_heur, proto_ethdevp2p);
 	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
 	proto_register_subtree_array(ett, array_length(ett));
 	ethdevp2p_tap = register_tap("ethdevp2p_tap");
