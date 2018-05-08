@@ -78,9 +78,18 @@ struct Ethdevp2pTap {
 };
 
 //For conversation
-struct Ethdevp2pConversation {
-	gint packet_type;
-};
+static int hf_ethdevp2p_conv_id = -1;
+static int hf_ethdevp2p_conv_ping_count = -1;
+static int hf_ethdevp2p_conv_pong_count = -1;
+static int hf_ethdevp2p_conv_findNode_count = -1;
+static int hf_ethdevp2p_conv_neighbours_count = -1;
+typedef struct _eth_conv_info_t {
+	guint32 conv_id;
+	guint32 ping_count;
+	guint32 pong_count;
+	guint32 findNode_count;
+	guint32 neighbours_count;
+} eth_conv_info_t;
 
 static const guint8* st_str_packets = "Total Packets";
 static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
@@ -175,13 +184,6 @@ static int rlp_decode(tvbuff_t *tvb, struct PacketContent *packet_content) {
 }
 
 static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void *data _U_, struct PacketContent *packet_content) {
-	//For conversation
-	conversation_t *conversation;
-	conversation = find_or_create_conversation(pinfo);
-	struct Ethdevp2pConversation *ethdevp2pConversation;
-	ethdevp2pConversation = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pConversation));
-	conversation_set_dissector(conversation, ethdevp2pdisco_handle);
-	conversation_add_proto_data(conversation, proto_ethdevp2p, ethdevp2pConversation);
 	//For tap
 	struct Ethdevp2pTap *ethdevp2pInfo;
 	ethdevp2pInfo = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pTap));
@@ -206,7 +208,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	guint value;
 	value = tvb_get_guint8(tvb, offset);
 	ethdevp2pInfo->packet_type = value;
-	ethdevp2pConversation->packet_type = value;
 	/* Add the Packet Type to the Sub Tree */
 	proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_packet_type, tvb, offset, 1, ENC_BIG_ENDIAN);
 	gint currentData = 1;
@@ -436,7 +437,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		//Get hash
 		if (packet_content->dataCount > currentData) {
 			if (packet_content->data_list[currentData].length == 32) {
-				//It's expiration
+				//It's hash
 				proto_tree_add_item(ethdevp2p_packet, hf_ethdevp2p_pong_ping_hash, tvb,
 					packet_content->data_list[currentData].offset, 32, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 				currentData++;
@@ -634,7 +635,51 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
 	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
-	wmem_free(wmem_packet_scope(), ethdevp2pConversation);
+	//For conversation
+	//For conversation
+	conversation_t *conversation;
+	conversation = find_or_create_conversation(pinfo);
+	eth_conv_info_t *eth_conv_info;
+	eth_conv_info = (eth_conv_info_t *)conversation_get_proto_data(conversation, proto_ethdevp2p);
+	if (!eth_conv_info) {
+		//No conversation found
+		eth_conv_info = wmem_new(wmem_file_scope(), eth_conv_info_t);
+		eth_conv_info->conv_id = conversation->conv_index;
+		eth_conv_info->ping_count = 0;
+		eth_conv_info->pong_count = 0;
+		eth_conv_info->findNode_count = 0;
+		eth_conv_info->neighbours_count = 0;
+		conversation_add_proto_data(conversation, proto_ethdevp2p, eth_conv_info);
+	} 
+	if (!PINFO_FD_VISITED(pinfo)) {
+		//update conversation info based on type
+		switch (value) {
+		case 0x01:
+			eth_conv_info->ping_count++;
+			break;
+		case 0x02:
+			eth_conv_info->pong_count++;
+			break;
+		case 0x03:
+			eth_conv_info->findNode_count++;
+			break;
+		case 0x04:
+			eth_conv_info->neighbours_count++;
+			break;
+		}
+	}
+	//Print state track in the tree
+	proto_item *it;
+	it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_id, tvb, 0, 0, eth_conv_info->conv_id);
+	PROTO_ITEM_SET_GENERATED(it);
+	it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_count, tvb, 0, 0, eth_conv_info->ping_count);
+	PROTO_ITEM_SET_GENERATED(it);
+	it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_pong_count, tvb, 0, 0, eth_conv_info->pong_count);
+	PROTO_ITEM_SET_GENERATED(it);
+	it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_findNode_count, tvb, 0, 0, eth_conv_info->findNode_count);
+	PROTO_ITEM_SET_GENERATED(it);
+	it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_neighbours_count, tvb, 0, 0, eth_conv_info->neighbours_count);
+	PROTO_ITEM_SET_GENERATED(it);
 	return 0;
 }
 
@@ -893,6 +938,41 @@ void proto_register_ethdevp2p(void) {
 
 	{ &hf_ethdevp2p_neighbors_nodes_number,
 		{ "Neighbors Node number", "ethdevp2pdisco.neighbors.node_number",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_id,
+		{ "Conversation id", "ethdevp2pdisco.conv.id",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_ping_count,
+		{ "Number of Ping exchanged with peer", "ethdevp2pdisco.conv.ping_count",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_pong_count,
+		{ "Number of Piong exchanged with peer", "ethdevp2pdisco.conv.pong_count",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_findNode_count,
+		{ "Number of findNode exchanged with peer", "ethdevp2pdisco.conv.findNode_count",
+		FT_UINT32, BASE_DEC,
+		NULL, 0X0,
+		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_neighbours_count,
+		{ "Number of Neighbours exchanged with peer", "ethdevp2pdisco.conv.neighbours_count",
 		FT_UINT32, BASE_DEC,
 		NULL, 0X0,
 		NULL, HFILL }
