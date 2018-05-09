@@ -5,6 +5,7 @@
 #include <epan/tap.h>
 #include <epan/stats_tree.h>
 #include <epan/conversation.h>
+#include <epan/srt_table.h>
 
 #define MIN_ETHDEVP2PDISCO_LEN 98
 #define MAX_ETHDEVP2PDISCO_LEN 1280
@@ -76,6 +77,15 @@ static int ethdevp2p_tap = -1;
 
 struct Ethdevp2pTap {
     gint packet_type;
+	gint node_number;
+	gint ping_count;
+	gint pong_count;
+	gint findNode_count;
+	gint neighbours_count;
+	gint pp_time_flag;
+	gint fn_time_flag;
+	nstime_t pp_time;
+	nstime_t fn_time;
 };
 
 //For conversation
@@ -128,8 +138,18 @@ typedef struct _eth_conv_fn_transaction_t {
 
 static const guint8* st_str_packets = "Total Packets";
 static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
+static const guint8* st_str_packet_neighbours = "Number of Nodes exchanged";
+static const guint8* st_str_packet_ping_frequency = "Frequency of Ping per node";
+static const guint8* st_str_packet_pong_frequency = "Frequency of Pong per node";
+static const guint8* st_str_packet_findNode_frequency = "Frequency of findNode per node";
+static const guint8* st_str_packet_neighbours_frequency = "Frequency of neighbours per node";
 static int st_node_packets = -1;
 static int st_node_packet_types = -1;
+static int st_node_packet_neighbours = -1;
+static int st_node_packet_ping_frequency = -1;
+static int st_node_packet_pong_frequency = -1;
+static int st_node_packet_findNode_frequency = -1;
+static int st_node_packet_neighbours_frequency = -1;
 
 static int rlp_decode(tvbuff_t *tvb, struct PacketContent *packet_content) {
 	gint offset = 0;
@@ -222,6 +242,16 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	//For tap
 	struct Ethdevp2pTap *ethdevp2pInfo;
 	ethdevp2pInfo = wmem_alloc(wmem_packet_scope(), sizeof(struct Ethdevp2pTap));
+	ethdevp2pInfo->packet_type = -1;
+	ethdevp2pInfo->node_number = -1;
+	ethdevp2pInfo->ping_count = -1;
+	ethdevp2pInfo->pong_count = -1;
+	ethdevp2pInfo->findNode_count = -1;
+	ethdevp2pInfo->neighbours_count = -1;
+	ethdevp2pInfo->pp_time_flag = 0;
+	ethdevp2pInfo->fn_time_flag = 0;
+	ethdevp2pInfo->pp_time = pinfo->fd->abs_ts;
+	ethdevp2pInfo->fn_time = pinfo->fd->abs_ts;
 	gint offset = 0;
 	col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PDISCO");
 	col_clear(pinfo->cinfo, COL_INFO);
@@ -645,6 +675,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 			packet_content->data_list[0].offset + 1,
 			packet_content->data_list[currentData].offset - packet_content->data_list[0].offset - 2,
 			nodeNumber);
+		ethdevp2pInfo->node_number = nodeNumber;
 		//Get expiration
 		if (packet_content->dataCount > currentData) {
 			if (packet_content->data_list[currentData].length == 4) {
@@ -668,8 +699,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		//Not valid packet
 		return 1;
 	}
-	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
-	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
 	//For conversation
 	proto_item *it;
 	conversation_t *conversation;
@@ -790,12 +819,16 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		PROTO_ITEM_SET_GENERATED(it);
 		it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_count, tvb, 0, 0, eth_conv_info->ping_count);
 		PROTO_ITEM_SET_GENERATED(it);
+		ethdevp2pInfo->ping_count = eth_conv_info->ping_count;
 		it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_pong_count, tvb, 0, 0, eth_conv_info->pong_count);
 		PROTO_ITEM_SET_GENERATED(it);
+		ethdevp2pInfo->pong_count = eth_conv_info->pong_count;
 		it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_findNode_count, tvb, 0, 0, eth_conv_info->findNode_count);
 		PROTO_ITEM_SET_GENERATED(it);
+		ethdevp2pInfo->findNode_count = eth_conv_info->findNode_count;
 		it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_neighbours_count, tvb, 0, 0, eth_conv_info->neighbours_count);
 		PROTO_ITEM_SET_GENERATED(it);
+		ethdevp2pInfo->neighbours_count = eth_conv_info->neighbours_count;
 	}
 	if (!eth_conv_pp_trans) {
 		/* Create a fake transaction */
@@ -826,6 +859,8 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 			nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_pp_trans->pp_time);
 			it = proto_tree_add_time(ethdevp2p_tree, hf_ethdevp2p_conv_pp_time, tvb, 0, 0, &ns);
 			PROTO_ITEM_SET_GENERATED(it);
+			ethdevp2pInfo->pp_time = eth_conv_pp_trans->pp_time;
+			ethdevp2pInfo->pp_time_flag = 1;
 		}
 		break;
 	case 0x03:
@@ -843,10 +878,15 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 				nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_fn_trans->fn_time);
 				it = proto_tree_add_time(ethdevp2p_tree, hf_ethdevp2p_conv_fn_time, tvb, 0, 0, &ns);
 				PROTO_ITEM_SET_GENERATED(it);
+				ethdevp2pInfo->fn_time = eth_conv_fn_trans->fn_time;
+				ethdevp2pInfo->fn_time_flag = 1;
 			}
 		}
 		break;
 	}
+	//For stats
+	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
+	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
 	return 0;
 }
 
@@ -882,6 +922,16 @@ static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_
 static void ethdevp2p_stats_tree_init(stats_tree *st) {
 	st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
 	st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
+	st_node_packet_neighbours = stats_tree_create_range_node(st, st_str_packet_neighbours, 0,
+		"0-5", "6-10", "11-", NULL);
+	st_node_packet_ping_frequency = stats_tree_create_range_node(st, st_str_packet_ping_frequency, 0,
+		"0-", NULL);
+	st_node_packet_pong_frequency = stats_tree_create_range_node(st, st_str_packet_pong_frequency, 0,
+		"0-", NULL);
+	st_node_packet_findNode_frequency = stats_tree_create_range_node(st, st_str_packet_findNode_frequency, 0,
+		"0-", NULL);
+	st_node_packet_neighbours_frequency = stats_tree_create_range_node(st, st_str_packet_neighbours_frequency, 0,
+		"0-", NULL);
 }
 
 static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_dissect_t* edt, const void* p) {
@@ -889,12 +939,47 @@ static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_
 	tick_stat_node(st, st_str_packets, 0, FALSE);
 	stats_tree_tick_pivot(st, st_node_packet_types,
 		val_to_str(pi->packet_type, packettypenames, "Unknown packet type (%d)"));
+	stats_tree_tick_range(st, st_str_packet_neighbours, 0, pi->node_number);
+	stats_tree_tick_range(st, st_str_packet_ping_frequency, 0, pi->ping_count);
+	stats_tree_tick_range(st, st_str_packet_pong_frequency, 0, pi->pong_count);
+	stats_tree_tick_range(st, st_str_packet_findNode_frequency, 0, pi->findNode_count);
+	stats_tree_tick_range(st, st_str_packet_neighbours_frequency, 0, pi->neighbours_count);
 	return 1;
 }
 
 static void register_ethdevp2p_stat_trees(void) {
-    stats_tree_register_plugin("ethdevp2p_tap", "ethdevp2pdisco", "Ethdevp2p/Packet Types", 0,
+    stats_tree_register_plugin("ethdevp2p_tap", "ethdevp2pdisco", "Ethdevp2p/Packet Stats", 0,
         ethdevp2p_stats_tree_packet, ethdevp2p_stats_tree_init, NULL);
+}
+
+static void ethdevp2p_srt_table_init(struct register_srt* srt _U_, GArray* srt_array,
+	srt_gui_init_cb gui_callback, void* gui_data) {
+	srt_stat_table *eth_srt_table;
+	eth_srt_table = init_srt_table("Ethdevp2p packets service response time", NULL, srt_array, 2,
+		NULL, "eth.srt.packets", gui_callback, gui_data, NULL);
+	init_srt_table_row(eth_srt_table, 0, "P->P response time");
+	init_srt_table_row(eth_srt_table, 1, "F->N response time");
+}
+
+static int ethdevp2p_srt_table_packet(void *pss, packet_info *pinfo, epan_dissect_t *edt _U_, const void *prv) {
+	srt_stat_table *eth_srt_table;
+	srt_data_t *data = (srt_data_t *)pss;
+	const struct Ethdevp2pTap *ethdevp2pInfo = (const struct Ethdevp2pTap *)prv;
+	if (!ethdevp2pInfo) {
+		return 0;
+	}
+	eth_srt_table = g_array_index(data->srt_array, srt_stat_table*, 0);
+	if (ethdevp2pInfo->pp_time_flag) {
+		add_srt_table_data(eth_srt_table, 0, &ethdevp2pInfo->pp_time, pinfo);
+	}
+	if (ethdevp2pInfo->fn_time_flag) {
+		add_srt_table_data(eth_srt_table, 1, &ethdevp2pInfo->fn_time, pinfo);
+	}
+	return 1;
+}
+
+static void register_ethdevp2p_srt_table(void) {
+	register_srt_table(proto_ethdevp2p, "ethdevp2p_tap", 1, ethdevp2p_srt_table_packet, ethdevp2p_srt_table_init, NULL);
 }
 
 void proto_register_ethdevp2p(void) {
@@ -1236,6 +1321,7 @@ void proto_register_ethdevp2p(void) {
 	proto_register_subtree_array(ett, array_length(ett));
 	ethdevp2p_tap = register_tap("ethdevp2p_tap");
 	register_ethdevp2p_stat_trees();
+	register_ethdevp2p_srt_table();
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
