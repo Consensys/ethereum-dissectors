@@ -88,7 +88,11 @@ static int hf_ethdevp2p_conv_ping_index = -1;
 static int hf_ethdevp2p_conv_pong_index = -1;
 static int hf_ethdevp2p_conv_findNode_index = -1;
 static int hf_ethdevp2p_conv_neighbours_index = -1;
+static int hf_ethdevp2p_conv_ping_frame = -1;
+static int hf_ethdevp2p_conv_pong_frame = -1;
+static int hf_ethdevp2p_conv_pp_time = -1;
 typedef struct _eth_conv_info_t {
+	wmem_map_t *pdus;
 	guint32 conv_id;
 	guint32 ping_count;
 	guint32 pong_count;
@@ -107,6 +111,11 @@ typedef struct _eth_conv_findNode_index_t {
 typedef struct _eth_conv_neighbours_index_t {
 	guint32 neighbours_index;
 } eth_conv_neighbours_index_t;
+typedef struct _eth_conv_pp_transaction_t {
+	guint32 ping_frame;
+	guint32 pong_frame;
+	nstime_t pp_time;
+} eth_conv_pp_transaction_t;
 
 static const guint8* st_str_packets = "Total Packets";
 static const guint8* st_str_packet_types = "Ethdevp2p Packet Types";
@@ -653,6 +662,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	tap_queue_packet(ethdevp2p_tap, pinfo, ethdevp2pInfo);
 	wmem_free(wmem_packet_scope(), ethdevp2pInfo);
 	//For conversation
+	proto_item *it;
 	conversation_t *conversation;
 	conversation = find_or_create_conversation(pinfo);
 	eth_conv_info_t *eth_conv_info;
@@ -660,10 +670,12 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	eth_conv_pong_index_t *eth_conv_pong_index;
 	eth_conv_findNode_index_t *eth_conv_findNode_index;
 	eth_conv_neighbours_index_t *eth_conv_neighbours_index;
+	eth_conv_pp_transaction_t *eth_conv_pp_trans;
 	eth_conv_info = (eth_conv_info_t *)conversation_get_proto_data(conversation, proto_ethdevp2p);
 	if (!eth_conv_info) {
 		//No conversation found
 		eth_conv_info = wmem_new(wmem_file_scope(), eth_conv_info_t);
+		eth_conv_info->pdus = wmem_map_new(wmem_file_scope(), g_direct_hash, g_direct_equal);
 		eth_conv_info->conv_id = conversation->conv_index;
 		eth_conv_info->ping_count = 0;
 		eth_conv_info->pong_count = 0;
@@ -675,16 +687,26 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		//update conversation info based on type
 		switch (value) {
 		case 0x01:
+			//This is a Ping request
 			eth_conv_ping_index = wmem_new(wmem_file_scope(), eth_conv_ping_index_t);
 			eth_conv_ping_index->ping_index = eth_conv_info->ping_count;
 			p_add_proto_data(wmem_file_scope(), pinfo, proto_ethdevp2p, pinfo->num, eth_conv_ping_index);
 			eth_conv_info->ping_count++;
+			eth_conv_pp_trans = wmem_new(wmem_file_scope(), eth_conv_pp_transaction_t);
+			eth_conv_pp_trans->ping_frame = pinfo->num;
+			eth_conv_pp_trans->pong_frame = 0;
+			eth_conv_pp_trans->pp_time = pinfo->fd->abs_ts;
+			wmem_map_insert(eth_conv_info->pdus, GUINT_TO_POINTER(eth_conv_ping_index->ping_index), (void *)eth_conv_pp_trans);
 			break;
 		case 0x02:
 			eth_conv_pong_index = wmem_new(wmem_file_scope(), eth_conv_pong_index_t);
 			eth_conv_pong_index->pong_index = eth_conv_info->pong_count;
 			p_add_proto_data(wmem_file_scope(), pinfo, proto_ethdevp2p, pinfo->num, eth_conv_pong_index);
 			eth_conv_info->pong_count++;
+			eth_conv_pp_trans = (eth_conv_pp_transaction_t *)wmem_map_lookup(eth_conv_info->pdus, GUINT_TO_POINTER(eth_conv_pong_index->pong_index));
+			if (eth_conv_pp_trans) {
+				eth_conv_pp_trans->pong_frame = pinfo->num;
+			}
 			break;
 		case 0x03:
 			eth_conv_findNode_index = wmem_new(wmem_file_scope(), eth_conv_findNode_index_t);
@@ -702,7 +724,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	else {
 		//Print state track in the tree
-		proto_item *it;
 		switch (value) {
 			case 0x01:
 				eth_conv_ping_index = (eth_conv_ping_index_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_ethdevp2p, pinfo->num);
@@ -710,6 +731,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 					it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_index, tvb, 0, 0, eth_conv_ping_index->ping_index);
 					PROTO_ITEM_SET_GENERATED(it);
 				}
+				eth_conv_pp_trans = (eth_conv_pp_transaction_t *)wmem_map_lookup(eth_conv_info->pdus, GUINT_TO_POINTER(eth_conv_ping_index->ping_index));
 				break;
 			case 0x02:
 				eth_conv_pong_index = (eth_conv_pong_index_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_ethdevp2p, pinfo->num);
@@ -717,6 +739,7 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 					it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_pong_index, tvb, 0, 0, eth_conv_pong_index->pong_index);
 					PROTO_ITEM_SET_GENERATED(it);
 				}
+				eth_conv_pp_trans = (eth_conv_pp_transaction_t *)wmem_map_lookup(eth_conv_info->pdus, GUINT_TO_POINTER(eth_conv_pong_index->pong_index));
 				break;
 			case 0x03:
 				eth_conv_findNode_index = (eth_conv_findNode_index_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_ethdevp2p, pinfo->num);
@@ -743,6 +766,31 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		PROTO_ITEM_SET_GENERATED(it);
 		it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_neighbours_count, tvb, 0, 0, eth_conv_info->neighbours_count);
 		PROTO_ITEM_SET_GENERATED(it);
+	}
+	if (!eth_conv_pp_trans) {
+		/* Create a fake transaction */
+		eth_conv_pp_trans = wmem_new(wmem_packet_scope(), eth_conv_pp_transaction_t);
+		eth_conv_pp_trans->ping_frame = 0;
+		eth_conv_pp_trans->pong_frame = 0;
+		eth_conv_pp_trans->pp_time = pinfo->fd->abs_ts;
+	}
+	switch (value) {
+	case 0x01:
+		if (eth_conv_pp_trans->pong_frame) {
+			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_pong_frame, tvb, 0, 0, eth_conv_pp_trans->pong_frame);
+			PROTO_ITEM_SET_GENERATED(it);
+		}
+		break;
+	case 0x02:
+		if (eth_conv_pp_trans->ping_frame) {
+			nstime_t ns;
+			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_frame, tvb, 0, 0, eth_conv_pp_trans->ping_frame);
+			PROTO_ITEM_SET_GENERATED(it);
+			nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_pp_trans->pp_time);
+			it = proto_tree_add_time(ethdevp2p_tree, hf_ethdevp2p_conv_pp_time, tvb, 0, 0, &ns);
+			PROTO_ITEM_SET_GENERATED(it);
+		}
+		break;
 	}
 	return 0;
 }
@@ -1068,6 +1116,27 @@ void proto_register_ethdevp2p(void) {
 		FT_UINT32, BASE_DEC,
 		NULL, 0X0,
 		NULL, HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_ping_frame,
+		{ "Ping in", "ethdevp2pdisco.conv.ping_frame",
+		FT_FRAMENUM, BASE_NONE,
+		FRAMENUM_TYPE(FT_FRAMENUM_REQUEST), 0X0,
+		"This is a response to the Ping request in this frame", HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_pong_frame,
+		{ "Pong in", "ethdevp2pdisco.conv.pong_frame",
+		FT_FRAMENUM, BASE_NONE,
+		FRAMENUM_TYPE(FT_FRAMENUM_RESPONSE), 0X0,
+		"The response to this Ping request is in this frame", HFILL }
+	},
+
+	{ &hf_ethdevp2p_conv_pp_time,
+		{ "Response time", "ethdevp2pdisco.conv.pp_time",
+		FT_RELATIVE_TIME, BASE_NONE,
+		NULL, 0X0,
+		"The time between the Ping and the Pong", HFILL }
 	}
 	
     };
