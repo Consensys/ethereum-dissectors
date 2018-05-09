@@ -6,6 +6,7 @@
 #include <epan/stats_tree.h>
 #include <epan/conversation.h>
 #include <epan/srt_table.h>
+#include <epan/conversation_table.h>
 
 #define MIN_ETHDEVP2PDISCO_LEN 98
 #define MAX_ETHDEVP2PDISCO_LEN 1280
@@ -979,7 +980,42 @@ static int ethdevp2p_srt_table_packet(void *pss, packet_info *pinfo, epan_dissec
 }
 
 static void register_ethdevp2p_srt_table(void) {
-	register_srt_table(proto_ethdevp2p, "ethdevp2p_tap", 1, ethdevp2p_srt_table_packet, ethdevp2p_srt_table_init, NULL);
+	register_srt_table(proto_ethdevp2p, "ethdevp2pdisco", 1, ethdevp2p_srt_table_packet, ethdevp2p_srt_table_init, NULL);
+}
+
+static const char* ethdevp2p_conv_get_filter_type(conv_item_t* conv, conv_filter_type_e filter) {
+	return CONV_FILTER_INVALID;
+}
+
+static const char* ethdevp2p_host_get_filter_type(hostlist_talker_t* host, conv_filter_type_e filter) {
+	return CONV_FILTER_INVALID;
+}
+
+static ct_dissector_info_t ethdevp2p_ct_dissector_info = {&ethdevp2p_conv_get_filter_type};
+
+static hostlist_dissector_info_t ethdevp2p_host_dissector_info = {&ethdevp2p_host_get_filter_type};
+
+static int ethdevp2p_hostlist_packet(void *pit, packet_info *pinfo,
+	epan_dissect_t *edt _U_, const void *vip _U_) {
+	conv_hash_t *hash = (conv_hash_t*)pit;
+
+	add_hostlist_table_data(hash, &pinfo->dl_src, 0, TRUE, 1, pinfo->fd->pkt_len, &ethdevp2p_host_dissector_info, ENDPOINT_NONE);
+	add_hostlist_table_data(hash, &pinfo->dl_dst, 0, FALSE, 1, pinfo->fd->pkt_len, &ethdevp2p_host_dissector_info, ENDPOINT_NONE);
+
+	return 1;
+}
+
+static int ethdevp2p_conversation_packet(void *pct, packet_info *pinfo,
+	epan_dissect_t *edt _U_, const void *vip _U_) {
+	conv_hash_t *hash = (conv_hash_t*)pct;
+	add_conversation_table_data(hash, &pinfo->dl_src, &pinfo->dl_dst, 0, 0, 1,
+		pinfo->fd->pkt_len, &pinfo->rel_ts, &pinfo->abs_ts,
+		&ethdevp2p_ct_dissector_info, ENDPOINT_NONE);
+	return 1;
+}
+
+static void register_ethdevp2p_conversation_table(void) {
+	register_conversation_table(proto_ethdevp2p, TRUE, ethdevp2p_conversation_packet, ethdevp2p_hostlist_packet);
 }
 
 void proto_register_ethdevp2p(void) {
@@ -1319,9 +1355,10 @@ void proto_register_ethdevp2p(void) {
 	ethdevp2pdisco_handle = create_dissector_handle(dissect_ethdevp2p_heur, proto_ethdevp2p);
 	proto_register_field_array(proto_ethdevp2p, hf, array_length(hf));
 	proto_register_subtree_array(ett, array_length(ett));
-	ethdevp2p_tap = register_tap("ethdevp2p_tap");
+	ethdevp2p_tap = register_tap("ethdevp2pdisco");
 	register_ethdevp2p_stat_trees();
 	register_ethdevp2p_srt_table();
+	register_ethdevp2p_conversation_table();
 }
 
 void proto_reg_handoff_ethdevp2p(void) {
