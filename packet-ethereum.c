@@ -847,13 +847,13 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	switch (value) {
 	case 0x01:
-		if (eth_conv_pp_trans->pong_frame) {
+		if (eth_conv_pp_trans->pong_frame && eth_conv_pp_trans->ping_frame) {
 			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_pong_frame, tvb, 0, 0, eth_conv_pp_trans->pong_frame);
 			PROTO_ITEM_SET_GENERATED(it);
 		}
 		break;
 	case 0x02:
-		if (eth_conv_pp_trans->ping_frame) {
+		if (eth_conv_pp_trans->ping_frame && eth_conv_pp_trans->pong_frame) {
 			nstime_t ns;
 			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_frame, tvb, 0, 0, eth_conv_pp_trans->ping_frame);
 			PROTO_ITEM_SET_GENERATED(it);
@@ -865,14 +865,14 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 		}
 		break;
 	case 0x03:
-		if (eth_conv_fn_trans->neighbours_frame) {
+		if (eth_conv_fn_trans->neighbours_frame && eth_conv_fn_trans->findNode_frame) {
 			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_neighbours_frame, tvb, 0, 0, eth_conv_fn_trans->neighbours_frame);
 			PROTO_ITEM_SET_GENERATED(it);
 		}
 		break;
 	case 0x04:
 		if (!(eth_conv_neighbours_index->neighbours_index % 2)) {
-			if (eth_conv_fn_trans->findNode_frame) {
+			if (eth_conv_fn_trans->findNode_frame && eth_conv_fn_trans->neighbours_frame) {
 				nstime_t ns;
 				it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_findNode_frame, tvb, 0, 0, eth_conv_fn_trans->findNode_frame);
 				PROTO_ITEM_SET_GENERATED(it);
@@ -949,7 +949,7 @@ static int ethdevp2p_stats_tree_packet(stats_tree* st, packet_info* pinfo, epan_
 }
 
 static void register_ethdevp2p_stat_trees(void) {
-    stats_tree_register_plugin("ethdevp2p_tap", "ethdevp2pdisco", "Ethdevp2p/Packet Stats", 0,
+    stats_tree_register_plugin("ethdevp2pdisco", "ethdevp2pdisco", "Ethdevp2p/Packet Stats", 0,
         ethdevp2p_stats_tree_packet, ethdevp2p_stats_tree_init, NULL);
 }
 
@@ -1316,14 +1316,14 @@ void proto_register_ethdevp2p(void) {
 	},
 
 	{ &hf_ethdevp2p_conv_findNode_frame,
-		{ "Neighbours in", "ethdevp2pdisco.conv.neighbours_frame",
+		{ "findNode in", "ethdevp2pdisco.conv.findNode_frame",
 		FT_FRAMENUM, BASE_NONE,
 		FRAMENUM_TYPE(FT_FRAMENUM_REQUEST), 0X0,
 		"This is a response(1st) to the findNode request in this frame", HFILL }
 	},
 
 	{ &hf_ethdevp2p_conv_neighbours_frame,
-		{ "findNode in", "ethdevp2pdisco.conv.findNode_frame",
+		{ "Neighbours in", "ethdevp2pdisco.conv.neighbours_frame",
 		FT_FRAMENUM, BASE_NONE,
 		FRAMENUM_TYPE(FT_FRAMENUM_RESPONSE), 0X0,
 		"The response(1st) to this findNode request is in this frame", HFILL }
