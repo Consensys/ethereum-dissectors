@@ -857,7 +857,13 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 			nstime_t ns;
 			it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_ping_frame, tvb, 0, 0, eth_conv_pp_trans->ping_frame);
 			PROTO_ITEM_SET_GENERATED(it);
-			nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_pp_trans->pp_time);
+			//nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_pp_trans->pp_time);
+			ns.secs = pinfo->fd->abs_ts.secs - eth_conv_pp_trans->pp_time.secs;
+			ns.nsecs = pinfo->fd->abs_ts.nsecs - eth_conv_pp_trans->pp_time.nsecs;
+			if (ns.nsecs < 0) {
+				ns.secs--;
+				ns.nsecs += 1000000000;
+			}
 			it = proto_tree_add_time(ethdevp2p_tree, hf_ethdevp2p_conv_pp_time, tvb, 0, 0, &ns);
 			PROTO_ITEM_SET_GENERATED(it);
 			ethdevp2pInfo->pp_time = eth_conv_pp_trans->pp_time;
@@ -876,7 +882,13 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 				nstime_t ns;
 				it = proto_tree_add_uint(ethdevp2p_tree, hf_ethdevp2p_conv_findNode_frame, tvb, 0, 0, eth_conv_fn_trans->findNode_frame);
 				PROTO_ITEM_SET_GENERATED(it);
-				nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_fn_trans->fn_time);
+				//nstime_delta(&ns, &pinfo->fd->abs_ts, &eth_conv_fn_trans->fn_time);
+				ns.secs = pinfo->fd->abs_ts.secs - eth_conv_fn_trans->fn_time.secs;
+				ns.nsecs = pinfo->fd->abs_ts.nsecs - eth_conv_fn_trans->fn_time.nsecs;
+				if (ns.nsecs < 0) {
+					ns.secs--;
+					ns.nsecs += 1000000000;
+				}
 				it = proto_tree_add_time(ethdevp2p_tree, hf_ethdevp2p_conv_fn_time, tvb, 0, 0, &ns);
 				PROTO_ITEM_SET_GENERATED(it);
 				ethdevp2pInfo->fn_time = eth_conv_fn_trans->fn_time;
@@ -907,7 +919,7 @@ static gboolean dissect_ethdevp2p_heur(tvbuff_t *tvb, packet_info *pinfo, proto_
 		wmem_free(wmem_packet_scope(), packet_content);
 		return FALSE;
 	}
-	if (dissect_ethdevp2p(tvb, pinfo, tree, data _U_, packet_content) == 1) {
+	if (dissect_ethdevp2p(tvb, pinfo, tree, data, packet_content) == 1) {
 		//This is not a valid message
 		wmem_free(wmem_packet_scope(), packet_content->data_list);
 		wmem_free(wmem_packet_scope(), packet_content);
