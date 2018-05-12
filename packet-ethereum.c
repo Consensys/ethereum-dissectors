@@ -280,8 +280,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 
 	//This is a Ping message
 	if (value == 0x01) {
-		ethdevp2pInfo.packet_type = 0x01;
-		ethdevp2pInfo.numbnodes = -1;
 		currentData = 1;
 		//Get Ping version
 		if (packet_content->dataCount > currentData) {
@@ -442,8 +440,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	//This is a Pong message	
 	else if (value == 0x02) {
 		//Get recipient IP address
-		ethdevp2pInfo.packet_type = 0x02;
-		ethdevp2pInfo.numbnodes = -1;
 		if (packet_content->dataCount > currentData) {
 			if (packet_content->data_list[currentData].length == 4) {
 				//It's IPv4
@@ -541,8 +537,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	//This is a FindNode message
 	else if (value == 0x03) {
-		ethdevp2pInfo.packet_type = 0x03;
-		ethdevp2pInfo.numbnodes = -1;
 		//Get public key
 		if (packet_content->dataCount > currentData) {
 			if (packet_content->data_list[currentData].length == 64) {
@@ -580,16 +574,6 @@ static int dissect_ethdevp2p(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 	}
 	//This is a Neighbour message
 	else if (value == 0x04) {
-		//Skip Prefix
-		ethdevp2pInfo.packet_type = 0x04;
-		ethdevp2pInfo.numbnodes = (tvb_captured_length(tvb) - 151) / 79;
-		hf_ethdevp2p_node_lenght = (tvb_captured_length(tvb) - 151) / 79;
-		test = tvb_get_guint8(tvb, offset);	//Get the length of the Overall List bytes length
-		offset += 1;
-		offset += (test - 0xf7);	//Skip the Overall List length byte(s)
-		test = tvb_get_guint8(tvb, offset);	//Get the length of the Node List bytes length
-		offset += 1;
-		offset += (test - 0xf7);	//Skip the Node List length byte(s)
 		proto_item *tiNode;
 		proto_tree *ethdevp2p_node;
 		//Get a list of nodes
@@ -969,7 +953,6 @@ static void register_ethdevp2p_stat_trees(void) {
         ethdevp2p_stats_tree_packet, ethdevp2p_stats_tree_init, NULL);
 }
 
-WS_DLL_PUBLIC_DEF const gchar version[] = "0.0";
 static void ethdevp2p_srt_table_init(struct register_srt* srt _U_, GArray* srt_array,
 	srt_gui_init_cb gui_callback, void* gui_data) {
 	srt_stat_table *eth_srt_table;
