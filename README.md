@@ -41,7 +41,9 @@ Note: This dissector is developed under windows environment, the windows buildin
 * Clone the wireshark repository to C:\Development 
 ```git clone https://code.wireshark.org/review/wireshark```
 * Open a Visual Studio Command Prompt: **VS2015 x64 Native Tools Command Prompt** for a 64-bit version
-* In the Command Prompt: **set WIRESHARK\_BASE\_DIR=C:\Development** and set the Qt to the install path, _for example_ **set QT5\_BASE\_DIR=C:\Qt\5.9.1\msvc2015_64** _Also, Please set these in windows environment variable, otherwise you have to set them every time you open a new Visual Studio Command Prompt_
+* In the Command Prompt: 
+```set WIRESHARK\_BASE\_DIR=C:\Development```
+and set the Qt to the install path, _for example_ ```set QT5\_BASE\_DIR=C:\Qt\5.9.1\msvc2015_64``` _Also, Please set these in windows environment variable, otherwise you have to set them every time you open a new Visual Studio Command Prompt_
 * Create a folder **C:\Development\wsbuild64\\**
 * Install this dissector: **Copy packet-ethereum.c to C:\Development\wireshark\epan\dissectors\\**
 * Add "**${CMAKE_CURRENT_SOURCE_DIR}/packet-ethereum.c**" to **C:\Development\wireshark\epan\dissectors\CMakeLists.txt** around line 620
