@@ -1,69 +1,73 @@
-#macro(replace_if_different SOURCE DST)
-#	set(extra_macro_args ${ARGN})
-#	set(options CREATE)
-#	set(one_value_args)
-#	set(multi_value_args)
-#	cmake_parse_arguments(REPLACE_IF_DIFFERENT "${options}" "${one_value_args}" "${multi_value_args}" "${extra_macro_args}")
-#
-#	if (REPLACE_IF_DIFFERENT_CREATE AND (NOT (EXISTS "${DST}")))
-#		file(WRITE "${DST}" "")
-#	endif()
-#
-#	execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOURCE}" "${DST}" RESULT_VARIABLE DIFFERENT OUTPUT_QUIET ERROR_QUIET)
-#
-#	if (DIFFERENT)
-#		execute_process(COMMAND ${CMAKE_COMMAND} -E rename "${SOURCE}" "${DST}")
-#	else()
-#		execute_process(COMMAND ${CMAKE_COMMAND} -E remove "${SOURCE}")
-#	endif()
-#endmacro()
+cmake_minimum_required(VERSION 3.1.0)
+project(wireshark-ethdevp2pdisco C)
 
-include(WiresharkPlugin)
+######################################
+# CMAKE Environment setup and checks #
+######################################
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-set_module_info(devp2p 0 0 0 0)
+include(MacroEnsureOutOfSourceBuild)
+macro_ensure_out_of_source_build("${PROJECT_NAME} requires an out of source build. Please create a separate build directory and run 'cmake /path/to/${PROJECT_NAME} [options]' there.")
 
-#set(TMPFILE "./BuildInfo.h.tmp")
-#set(OUTFILE "./BuildInfo.h")
-#set(README "./README.md")
+##############################
+# Find and load dependencies #
+##############################
+find_package(Wireshark REQUIRED)
+include_directories (${Wireshark_INCLUDE_DIR})
+INCLUDE(UseMakeDissectorReg)
 
-#configure_file("${README}" "${TMPFILE}")
-#replace_if_different("${TMPFILE}" "${OUTFILE}" CREATE)
-
-set(DISSECTOR_SRC
-	packet-ethereum.c
-)
-
-set(PLUGIN_FILES
-	plugin.c
-	${DISSECTOR_SRC}
-)
-
-set_source_files_properties(
-	${PLUGIN_FILES}
-	PROPERTIES
-	COMPILE_FLAGS "${WERROR_COMMON_FLAGS}"
-)
+find_package(GLIB2 REQUIRED)
+include_directories (${GLIB2_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-register_plugin_files(plugin.c
-	plugin
-	${DISSECTOR_SRC}
+########################
+# Specify Source filed #
+########################
+set(DISSECTOR_SRC
+  packet-ethereum.c
 )
 
-add_plugin_library(devp2p epan)
+#Generated plugin.c file contains plugin entry point.
+set(PLUGIN_FILES
+  plugin.c
+  ${DISSECTOR_SRC}
+)
 
-target_link_libraries(devp2p epan)
+##################
+# Compile Plugin #
+##################
+#Scan DISSECTOR_FILES for functions matching
+#'proto_register_' and 'proto_reg_handoff'
+#then generate entry points in plugin.c.
+register_dissector_files(plugin.c
+  plugin
+  ${DISSECTOR_SRC}
+)
 
-install_plugin(devp2p epan)
+#Create the library file from all source
+#files, including the generated plugin.c.
+#MODULE is required for Mac, as SHARED
+#produces a .dylib file instead of .so.
+add_library(wireshark-ethdevp2pdisco MODULE
+  ${PLUGIN_FILES}
+  )
 
-file(GLOB DISSECTOR_HEADERS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.h")
-CHECKAPI(
-	NAME
-	  devp2p
-	SWITCHES
-	  -g abort -g termoutput -build
-	SOURCES
-	  ${DISSECTOR_SRC}
-	  ${DISSECTOR_HEADERS}
+#Prevent generated file from being names libX.so.
+set_target_properties(wireshark-ethdevp2pdisco
+  PROPERTIES PREFIX "")
+
+#Link against wireshark library.
+target_link_libraries(wireshark-ethdevp2pdisco wireshark glib-2.0)
+
+###########################################
+# Set Plugin install location and INSTALL #
+###########################################
+IF ( NOT CMAKE_INSTALL_LIBDIR )
+  set(CMAKE_INSTALL_LIBDIR ~/.config/wireshark/plugins)
+ENDIF ( NOT CMAKE_INSTALL_LIBDIR )
+MESSAGE (STATUS "Plugin will be installed in: ${CMAKE_INSTALL_LIBDIR}")
+
+install(TARGETS wireshark-ethdevp2pdisco
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/ NAMELINK_SKIP
 )
