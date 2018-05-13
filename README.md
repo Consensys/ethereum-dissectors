@@ -30,26 +30,16 @@ Note: This dissector is developed under windows environment, the windows buildin
 **It is important to select the right version starts with msvc2015.**
 * Install chocolatey <https://chocolatey.org/>
 * Install Python: 
-```
-choco install -y python3
-```
+```choco install -y python3```
 * Install Git: 
-```
-choco install -y git
-```
+```choco install -y git```
 * Install Cmake: 
-```
-choco install -y cmake
-```
+```choco install -y cmake```
 * Install Asciidoctor, Xsltproc, And DocBook: 
-```
-choco install -y asciidoctorj xsltproc docbook-bundle
-```
+```choco install -y asciidoctorj xsltproc docbook-bundle```
 * Create a folder **C:\Development\\**
 * Clone the wireshark repository to C:\Development 
-```
-git clone https://code.wireshark.org/review/wireshark
-```
+```git clone https://code.wireshark.org/review/wireshark```
 * Open a Visual Studio Command Prompt: **VS2015 x64 Native Tools Command Prompt** for a 64-bit version
 * In the Command Prompt: **set WIRESHARK\_BASE\_DIR=C:\Development** and set the Qt to the install path, _for example_ **set QT5\_BASE\_DIR=C:\Qt\5.9.1\msvc2015_64** _Also, Please set these in windows environment variable, otherwise you have to set them every time you open a new Visual Studio Command Prompt_
 * Create a folder **C:\Development\wsbuild64\\**
@@ -62,9 +52,7 @@ git clone https://code.wireshark.org/review/wireshark
 
 ### For Windows (For future build)
 * Open a Visual Studio Command Prompt
-```
-cd C:\Development\wsbuild64\
-```
+```cd C:\Development\wsbuild64\```
 * _Make changes to packet-ethereum.c in wireshark folder_
 * ```msbuild /m /p:Configuration=RelWithDebInfo Wireshark.sln```
 * _You can leave the Command Prompt open and build the dissector every time you make some changes to it_
