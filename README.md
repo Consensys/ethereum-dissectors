@@ -4,7 +4,7 @@ This repo contains a set of network protocol dissectors for Ethereum that you ca
 
 Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works.
 
-Features currently supported by the Ethereum Discovery dissector (we're working on more):
+Here are the features currently supported by the Ethereum Discovery dissector (we're working on more):
 
 * Heuristics to dynamically detect Ethereum discovery traffic, no matter the port it's running on.
 * Decoding of `PING`, `PONG`, `FIND_NODE` and `NODES` packet, breaking the messages into its elements, with the appropriate datatypes.
@@ -14,11 +14,10 @@ Features currently supported by the Ethereum Discovery dissector (we're working 
   * inline in protocol trees.
 * Useful protocol statistics (e.g. message counts per type, nodes reported per response, etc.)
 
-**Table of contents:**
+# Table of contents
 
-   * [Build & run](#build-run)
+   * [Build & run](#build--run)
    * [Team](#team)
-   * [Get Involved](#get-involved)
    * [Why this project?](#why-this-project)
    * [License](#license)
 
