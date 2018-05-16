@@ -13,6 +13,7 @@ Here are the features currently supported by the Ethereum Discovery dissector (w
 * Heuristics to dynamically detect Ethereum discovery traffic, no matter the port it's running on.
 * Decoding of `PING`, `PONG`, `FIND_NODE` and `NODES` packet, breaking the messages into its elements, with the appropriate datatypes.
 * Linking of `PING` => `PONG` frames, as well as `FIND_NODE` => `NODES` interactions in protocol trees.
+* Lots of supported filters! (documentation WIP)
 * Service response time calculation for RPC interactions.
   * under: Statistics > Service Response Time > ETH discovery.
   * inline in protocol trees.
