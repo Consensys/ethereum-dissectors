@@ -4,6 +4,10 @@ This repo contains a set of network protocol dissectors for Ethereum that you ca
 
 Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works.
 
+<p align="center">
+<img src="assets/ethereum-discovery-demo.gif" alt="Ethereum discovery dissector demo">
+</p>
+
 Here are the features currently supported by the Ethereum Discovery dissector (we're working on more):
 
 * Heuristics to dynamically detect Ethereum discovery traffic, no matter the port it's running on.
@@ -74,7 +78,7 @@ Unfortunately no Wireshark dissectors exist yet for Ethereum devp2p protocols. T
 
 # About PegaSys
 
-<a href="https://pegasys.tech/?utm_source=github&utm_medium=source&utm_campaign=ethereum-dissectors" rel="nofollow"><img src="https://raw.github.com/ConsenSys/ethql/master/logo.svg?sanitize=true" alt="PegaSys logo" data-canonical-src="https://raw.github.com/ConsenSys/ethql/master/logo.svg?sanitize=true" width="400"></a>
+<a href="https://pegasys.tech/?utm_source=github&utm_medium=source&utm_campaign=ethereum-dissectors" rel="nofollow"><img src="https://raw.github.com/ConsenSys/ethql/master/assets/logo.svg?sanitize=true" alt="PegaSys logo" data-canonical-src="https://raw.github.com/ConsenSys/ethql/master/assets/logo.svg?sanitize=true" width="400"></a>
 
 PegaSys’ mission is to build blockchain solutions ready for production in business environments. We are committed to open source, and are creating a framework for collaborative innovation for the public-chain community and leading enterprises. 
 
