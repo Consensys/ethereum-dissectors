@@ -10,8 +10,8 @@ Features currently supported by the Ethereum Discovery dissector (we're working 
 * Decoding of `PING`, `PONG`, `FIND_NODE` and `NODES` packet, breaking the messages into its elements, with the appropriate datatypes.
 * Linking of `PING` => `PONG` frames, as well as `FIND_NODE` => `NODES` interactions in protocol trees.
 * Service response time calculation for RPC interactions.
-** under: Statistics > Service Response Time > ETH discovery.
-** inline in protocol trees.
+  * under: Statistics > Service Response Time > ETH discovery.
+  * inline in protocol trees.
 * Useful protocol statistics (e.g. message counts per type, nodes reported per response, etc.)
 
 **Table of contents:**
@@ -28,8 +28,8 @@ Features currently supported by the Ethereum Discovery dissector (we're working 
 
 1. Go to the [Wireshark repo](https://github.com/wireshark/wireshark) and clone it.
 2. Set up your build environment. The steps vary depending on your OS.
-** For Windows, follow the [instructions here](https://www.wireshark.org/docs/wsdg_html_chunked/ChapterSetup.html).
-** For Unix and macOS systems, most tools are already installed, but you need to ensure you have `cmake` and `ninja`. On macOS, you can run `brew install cmake ninja` if you use Homebrew.
+  * For Windows, follow the [instructions here](https://www.wireshark.org/docs/wsdg_html_chunked/ChapterSetup.html).
+  * For Unix and macOS systems, most tools are already installed, but you need to ensure you have `cmake` and `ninja`. On macOS, you can run `brew install cmake ninja` if you use Homebrew.
 3. Run a plain Wireshark build to ensure all is OK. In macOS, it looks like this:
 
 ```
