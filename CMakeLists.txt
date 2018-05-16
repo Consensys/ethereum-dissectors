@@ -20,17 +20,12 @@
 
 include(WiresharkPlugin)
 
-set_module_info(devp2p 0 0 0 0)
-
-#set(TMPFILE "./BuildInfo.h.tmp")
-#set(OUTFILE "./BuildInfo.h")
-#set(README "./README.md")
-
-#configure_file("${README}" "${TMPFILE}")
-#replace_if_different("${TMPFILE}" "${OUTFILE}" CREATE)
+set_module_info(ethereum 0 0 0 0)
 
 set(DISSECTOR_SRC
-	packet-ethereum.c
+		packet-ethereum.h
+        packet-ethereum.c
+		packet-ethereum-disc.c
 )
 
 set(PLUGIN_FILES
@@ -51,16 +46,16 @@ register_plugin_files(plugin.c
 	${DISSECTOR_SRC}
 )
 
-add_plugin_library(devp2p epan)
+add_plugin_library(ethereum epan)
 
-target_link_libraries(devp2p epan)
+target_link_libraries(ethereum epan)
 
-install_plugin(devp2p epan)
+install_plugin(ethereum epan)
 
 file(GLOB DISSECTOR_HEADERS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.h")
 CHECKAPI(
 	NAME
-	  devp2p
+	  ethereum
 	SWITCHES
 	  -g abort -g termoutput -build
 	SOURCES
