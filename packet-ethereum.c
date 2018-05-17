@@ -25,8 +25,6 @@
 
 #include "packet-ethereum.h"
 
-// Parses the next RLP element out of the buffer, starting at the indicated offset, and populates the metadata
-// about the element in the *rlp parameter.
 int rlp_next(tvbuff_t *tvb, guint offset, rlp_element_t *rlp) {
   guint8 prefix = tvb_get_guint8(tvb, offset);
   if (prefix >= 0x00 && prefix <= 0x7f) {

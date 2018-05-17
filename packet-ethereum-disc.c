@@ -49,14 +49,16 @@ static dissector_handle_t ethereum_disc_dtor_handle;
 
 static nstime_t unset_time;
 
+// Ethereum discovery protocol packet types.
 typedef enum packet_type {
-  UNKNOWN = 0x00,
+  UNKNOWN = 0x00,   // initialization value
   PING = 0x01,
   PONG = 0x02,
   FIND_NODE = 0x03,
   NODES = 0x04
 } packet_type_e;
 
+// Value strings: packet type <=> string representation.
 static const value_string packet_type_names[] = {
     {UNKNOWN, "(Unknown)"},
     {PING, "PING"},
@@ -65,7 +67,7 @@ static const value_string packet_type_names[] = {
     {NODES, "NODES"}
 };
 
-// Header fields.
+// Message header/packet fields.
 static int hf_ethereum_disc_msg_hash = -1;
 static int hf_ethereum_disc_msg_sig = -1;
 static int hf_ethereum_disc_packet = -1;
@@ -113,6 +115,17 @@ static int hf_ethereum_disc_nodes_length = -1;
 // For tap.
 static int ethereum_tap = -1;
 
+static const gchar *st_str_packets = "Total packets";
+static const gchar *st_str_packet_types = "Packet types";
+static const gchar *st_str_packet_nodecount = "# of nodes returned in NODES";
+
+// Statistics nodes.
+static int st_node_packets = -1;
+static int st_node_packet_types = -1;
+static int st_node_packet_nodes_count = -1;
+
+// The statistics struct handled by the Ethereum discovery tap.
+// Exportable as other dissectors can consume from our tap.
 typedef struct ethereum_disc_stat {
   gboolean is_request;
   gboolean has_request;
@@ -121,7 +134,8 @@ typedef struct ethereum_disc_stat {
   nstime_t rq_time;
 } ethereum_disc_stat_t;
 
-typedef struct ethereum_disc_conv {
+// The struct where we store state concerning a conversation between two parties.
+static typedef struct ethereum_disc_conv {
   guint32 total_count;
   guint32 ping_count;
   guint32 pong_count;
@@ -134,13 +148,23 @@ typedef struct ethereum_disc_conv {
   wmem_map_t *corr;
 } ethereum_disc_conv_t;
 
-typedef struct ethereum_disc_enhanced_data {
+// Enhanced packet data, attached to the pinfo for rendering in header fields.
+static typedef struct ethereum_disc_enhanced_data {
   guint32 seq;
   guint seqtype;
   nstime_t rt;
   nstime_t rq_time;
 } ethereum_disc_enhanced_data_t;
 
+// Represents a peer endpoint parsed from the discovery packets.
+static typedef struct endpoint {
+  guint32 ipv4_addr;
+  ws_in6_addr *ipv6_addr;
+  guint16 udp_port;
+  guint16 tcp_port;
+} ethereum_disc_endpoint_t;
+
+// A function that handles a packet.
 typedef int(packet_processor)(tvbuff_t *,
                               proto_tree *,
                               packet_info *,
@@ -149,25 +173,26 @@ typedef int(packet_processor)(tvbuff_t *,
                               ethereum_disc_conv_t *,
                               ethereum_disc_enhanced_data_t *);
 
-static const gchar *st_str_packets = "Total packets";
-static const gchar *st_str_packet_types = "Packet types";
-static const gchar *st_str_packet_nodecount = "# of nodes returned in NODES";
-static int st_node_packets = -1;
-static int st_node_packet_types = -1;
-static int st_node_packet_nodes_count = -1;
-
-typedef struct endpoint {
-  guint32 ipv4_addr;
-  ws_in6_addr *ipv6_addr;
-  guint16 udp_port;
-  guint16 tcp_port;
-} disc_endpoint_t;
-
-static disc_endpoint_t decode_endpoint(tvbuff_t *packet_data,
-                                       proto_tree *disc_packet,
-                                       rlp_element_t *rlp,
-                                       const int *fields[4]) {
-  disc_endpoint_t ret;
+/**
+ * Decodes an endpoint from the provided RLP elements and adds protocol tree items into the specified fields.
+ *
+ * Fields are specified in this order:
+ *  - IPv4 address, mutually exclusive group A.
+ *  - IPv6 address, mutually exclusive group A.
+ *  - UDP port.
+ *  - TCP port (optional).
+ *
+ * @param packet_data The buffer.
+ * @param disc_packet The tree onto which to add the tree items.
+ * @param rlp The RLP element pointing to the list representing the endpoint.
+ * @param fields The fields onto which to output the parsed data.
+ * @return An endpoint struct.
+ */
+static ethereum_disc_endpoint_t decode_endpoint(tvbuff_t *packet_data,
+                                                proto_tree *disc_packet,
+                                                rlp_element_t *rlp,
+                                                const int *fields[4]) {
+  ethereum_disc_endpoint_t ret;
 
   // IP addr.
   rlp_next(packet_data, rlp->data_offset, rlp);
@@ -197,11 +222,23 @@ static disc_endpoint_t decode_endpoint(tvbuff_t *packet_data,
   return ret;
 }
 
+/**
+ * Processes a PING packet.
+ *
+ * @param packet_tvb The buffer representing only the packet payload (excluding the message wrapper).
+ * @param packet_tree The protocol tree representing the packet.
+ * @param pinfo Packet
+ * @param rlp The RLP element pointing to the list representing the packet.
+ * @param st A ready-to-use statistics struct to populate.
+ * @param conv A ready-to-use conversation struct (retrieved or initialized).
+ * @param efdata A ready-to-use enhanced frame data struct.
+ * @return TRUE if processing was successful; FALSE otherwise.
+ */
 static int process_ping_msg(tvbuff_t *packet_tvb,
-                            proto_tree *disc_packet_tree,
+                            proto_tree *packet_tree,
                             packet_info *pinfo,
                             rlp_element_t *rlp,
-                            ethereum_disc_stat_t *st _U_,
+                            ethereum_disc_stat_t *st,
                             ethereum_disc_conv_t *conv,
                             ethereum_disc_enhanced_data_t *efdata) {
   proto_tree *parent;
@@ -221,20 +258,20 @@ static int process_ping_msg(tvbuff_t *packet_tvb,
 
   // Version.
   rlp_next(packet_tvb, rlp->data_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_ping_version, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_ping_version, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
   // Sender endpoint.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  decode_endpoint(packet_tvb, disc_packet_tree, rlp, sender_endpoint_fields);
+  decode_endpoint(packet_tvb, packet_tree, rlp, sender_endpoint_fields);
 
   // Recipient endpoint.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  decode_endpoint(packet_tvb, disc_packet_tree, rlp, recipient_endpoint_fields);
+  decode_endpoint(packet_tvb, packet_tree, rlp, recipient_endpoint_fields);
 
   // Expiration.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_ping_expiration, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_ping_expiration, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 
   if (!PINFO_FD_VISITED(pinfo)) {
@@ -244,7 +281,7 @@ static int process_ping_msg(tvbuff_t *packet_tvb,
   }
 
   // Update conversation.
-  parent = proto_tree_get_parent_tree(disc_packet_tree);
+  parent = proto_tree_get_parent_tree(packet_tree);
   ti = proto_tree_add_uint(parent, hf_ethereum_disc_seqtype, packet_tvb, 0, 0, efdata->seqtype);
   PROTO_ITEM_SET_GENERATED(ti);
 
@@ -259,8 +296,20 @@ static int process_ping_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
+/**
+ * Processes a PONG packet.
+ *
+ * @param packet_tvb The buffer representing only the packet payload (excluding the message wrapper).
+ * @param packet_tree The protocol tree representing the packet.
+ * @param pinfo Packet
+ * @param rlp The RLP element pointing to the list representing the packet.
+ * @param st A ready-to-use statistics struct to populate.
+ * @param conv A ready-to-use conversation struct (retrieved or initialized).
+ * @param efdata A ready-to-use enhanced frame data struct.
+ * @return TRUE if processing was successful; FALSE otherwise.
+ */
 static int process_pong_msg(tvbuff_t *packet_tvb,
-                            proto_tree *disc_packet_tree,
+                            proto_tree *packet_tree,
                             packet_info *pinfo _U_,
                             rlp_element_t *rlp,
                             ethereum_disc_stat_t *st _U_,
@@ -277,16 +326,16 @@ static int process_pong_msg(tvbuff_t *packet_tvb,
 
   // Recipient endpoint.
   rlp_next(packet_tvb, rlp->data_offset, rlp);
-  decode_endpoint(packet_tvb, disc_packet_tree, rlp, recipient_endpoint_fields);
+  decode_endpoint(packet_tvb, packet_tree, rlp, recipient_endpoint_fields);
 
   // Ping hash.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_pong_ping_hash, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_pong_ping_hash, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
   // Expiration.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_pong_expiration, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_pong_expiration, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 
   if (!PINFO_FD_VISITED(pinfo)) {
@@ -298,7 +347,7 @@ static int process_pong_msg(tvbuff_t *packet_tvb,
   }
 
   // Sequence number of the message type.
-  parent = proto_tree_get_parent_tree(disc_packet_tree);
+  parent = proto_tree_get_parent_tree(packet_tree);
   ti = proto_tree_add_uint(parent, hf_ethereum_disc_seqtype, packet_tvb, 0, 0, efdata->seqtype);
   PROTO_ITEM_SET_GENERATED(ti);
 
@@ -321,8 +370,20 @@ static int process_pong_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
+/**
+ * Processes a FIND_NODE packet.
+ *
+ * @param packet_tvb The buffer representing only the packet payload (excluding the message wrapper).
+ * @param packet_tree The protocol tree representing the packet.
+ * @param pinfo Packet
+ * @param rlp The RLP element pointing to the list representing the packet.
+ * @param st A ready-to-use statistics struct to populate.
+ * @param conv A ready-to-use conversation struct (retrieved or initialized).
+ * @param efdata A ready-to-use enhanced frame data struct.
+ * @return TRUE if processing was successful; FALSE otherwise.
+ */
 static int process_findnode_msg(tvbuff_t *packet_tvb,
-                                proto_tree *disc_packet_tree,
+                                proto_tree *packet_tree,
                                 packet_info *pinfo _U_,
                                 rlp_element_t *rlp, ethereum_disc_stat_t *st _U_,
                                 ethereum_disc_conv_t *conv,
@@ -332,12 +393,12 @@ static int process_findnode_msg(tvbuff_t *packet_tvb,
 
   // Target.
   rlp_next(packet_tvb, rlp->data_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_findnode_target, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_findnode_target, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
   // Expiration.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_findnode_expiration, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_findnode_expiration, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 
   // Update conversation and enhanced frame data.
@@ -348,12 +409,12 @@ static int process_findnode_msg(tvbuff_t *packet_tvb,
   }
 
   // Sequence number of the message type.
-  parent = proto_tree_get_parent_tree(disc_packet_tree);
+  parent = proto_tree_get_parent_tree(packet_tree);
   ti = proto_tree_add_uint(parent, hf_ethereum_disc_seqtype, packet_tvb, 0, 0, efdata->seqtype);
   PROTO_ITEM_SET_GENERATED(ti);
 
   // Link the NODES response.
-  parent = proto_tree_get_parent_tree(disc_packet_tree);
+  parent = proto_tree_get_parent_tree(packet_tree);
   guint32 nodesref = GPOINTER_TO_UINT(wmem_map_lookup(conv->corr, GUINT_TO_POINTER(pinfo->num)));
   if (nodesref) {
     ti = proto_tree_add_uint(parent, hf_ethereum_disc_res_ref, packet_tvb, 0, 0, nodesref);
@@ -364,8 +425,20 @@ static int process_findnode_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
+/**
+ * Processes a NODES packet.
+ *
+ * @param packet_tvb The buffer representing only the packet payload (excluding the message wrapper).
+ * @param packet_tree The protocol tree representing the packet.
+ * @param pinfo Packet
+ * @param rlp The RLP element pointing to the list representing the packet.
+ * @param st A ready-to-use statistics struct to populate.
+ * @param conv A ready-to-use conversation struct (retrieved or initialized).
+ * @param efdata A ready-to-use enhanced frame data struct.
+ * @return TRUE if processing was successful; FALSE otherwise.
+ */
 static int process_nodes_msg(tvbuff_t *packet_tvb,
-                             proto_tree *disc_packet_tree,
+                             proto_tree *packet_tree,
                              packet_info *pinfo,
                              rlp_element_t *rlp,
                              ethereum_disc_stat_t *st,
@@ -389,7 +462,7 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   guint i = 0;
   proto_tree *node_tree;
   while (rlp->type == LIST) {
-    ti = proto_tree_add_string(disc_packet_tree, hf_ethereum_disc_nodes_node, packet_tvb,
+    ti = proto_tree_add_string(packet_tree, hf_ethereum_disc_nodes_node, packet_tvb,
                                rlp->data_offset, rlp->byte_length, "test");
     node_tree = proto_item_add_subtree(ti, ett_ethereum_disc_nodes);
     decode_endpoint(packet_tvb, node_tree, rlp, recipient_endpoint_fields);
@@ -407,7 +480,7 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   }
 
   // Expiration
-  proto_tree_add_item(disc_packet_tree, hf_ethereum_disc_nodes_expiration, packet_tvb,
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_nodes_expiration, packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 
   // Enhance packet info with # of nodes.
@@ -427,7 +500,7 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   }
 
   // Sequence number of the message type.
-  parent = proto_tree_get_parent_tree(disc_packet_tree);
+  parent = proto_tree_get_parent_tree(packet_tree);
   ti = proto_tree_add_uint(parent, hf_ethereum_disc_seqtype, packet_tvb, 0, 0, efdata->seqtype);
   PROTO_ITEM_SET_GENERATED(ti);
 
@@ -450,6 +523,12 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
+/**
+ * Retrieves an existing conversation for this packet, or initialises a new one (and saves it).
+ *
+ * @param pinfo The packet.
+ * @return A ready-to-use conversation struct.
+ */
 static ethereum_disc_conv_t *get_conversation(packet_info *pinfo) {
   conversation_t *conversation;
   ethereum_disc_conv_t *ret;
@@ -474,16 +553,27 @@ static ethereum_disc_conv_t *get_conversation(packet_info *pinfo) {
   return ret;
 }
 
+/**
+ * Performs the dissection of a discovery packet.
+ *
+ * @param tvb The buffer containing the UDP datagram.
+ * @param pinfo The packet info.
+ * @param tree The protocol tree to populate.
+ * @param data Extra data.
+ * @return TRUE if successful, FALSE otherwise.
+ */
 static int dissect_ethereum(tvbuff_t *tvb,
                             packet_info *pinfo,
                             proto_tree *tree,
                             void *data _U_) {
+  proto_tree *ethereum_tree, *packet_tree;
+  proto_item *ti;
+  tvbuff_t *packet_tvb;
   ethereum_disc_stat_t *st;
   ethereum_disc_conv_t *conv;
   ethereum_disc_enhanced_data_t *efdata;
-  proto_tree *ethereum_tree;
-  proto_item *ti;
-  tvbuff_t *packet_tvb;
+  const gchar *packet_type_desc;
+  rlp_element_t rlp;
 
   static packet_processor *processors[] = {
       [PING] = &process_ping_msg,
@@ -520,14 +610,13 @@ static int dissect_ethereum(tvbuff_t *tvb,
   st->packet_type = (packet_type_e) packet_type;
 
   // Packet subtree, until the end.
-  const gchar *packet_type_desc = val_to_str(packet_type, packet_type_names, "(Unknown packet type)");
+  packet_type_desc = val_to_str(packet_type, packet_type_names, "(Unknown packet type)");
   ti = proto_tree_add_string(ethereum_tree, hf_ethereum_disc_packet, tvb,
                              ETHEREUM_DISC_PACKET_DATA_START, -1, packet_type_desc);
-  proto_tree *disc_packet_tree = proto_item_add_subtree(ti, ett_ethereum_disc_packetdata);
+  packet_tree = proto_item_add_subtree(ti, ett_ethereum_disc_packetdata);
 
   packet_tvb = tvb_new_subset_remaining(tvb, ETHEREUM_DISC_PACKET_DATA_START);
 
-  rlp_element_t rlp;
   rlp_next(packet_tvb, 0, &rlp);
   // Assert we have a top level RLP list.
   if (rlp.type != LIST) {
@@ -553,15 +642,25 @@ static int dissect_ethereum(tvbuff_t *tvb,
     p_add_proto_data(wmem_file_scope(), pinfo, proto_ethereum, 0, efdata);
   }
 
-  ti = proto_tree_add_uint(proto_tree_get_parent_tree(disc_packet_tree), hf_ethereum_disc_seq,
+  ti = proto_tree_add_uint(proto_tree_get_parent_tree(packet_tree), hf_ethereum_disc_seq,
                            packet_tvb, 0, 0, efdata->seq);
   PROTO_ITEM_SET_GENERATED(ti);
 
-  processors[packet_type](packet_tvb, disc_packet_tree, pinfo, &rlp, st, conv, efdata);
+  processors[packet_type](packet_tvb, packet_tree, pinfo, &rlp, st, conv, efdata);
   tap_queue_packet(ethereum_tap, pinfo, st);
   return TRUE;
 }
 
+/**
+ * Evaluates heuristics on a frame and performs the dissection only if there's a high probability
+ * that this is an Ethereum discovery message.
+ *
+ * @param tvb The buffer containing the UDP datagram.
+ * @param pinfo The packet info.
+ * @param tree The protocol tree to populate.
+ * @param data Extra data.
+ * @return TRUE if successful, FALSE otherwise.
+ */
 static gboolean dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
   // Check length.
   if (tvb_captured_length(tvb) < MIN_ETHDEVP2PDISCO_LEN || tvb_captured_length(tvb) > MAX_ETHDEVP2PDISCO_LEN) {
@@ -590,7 +689,11 @@ static gboolean dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_t
   return TRUE;
 }
 
-// Register stats tree
+/**
+ * Initializes the statistics trees.
+ *
+ * @param st Statistics tree.
+ */
 static void ethereum_discovery_stats_tree_init(stats_tree *st) {
   st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
   st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
@@ -598,6 +701,15 @@ static void ethereum_discovery_stats_tree_init(stats_tree *st) {
                                                             "0-5", "6-10", "11-", NULL);
 }
 
+/**
+ * Callback called by Wireshark whenever a stat is published on the tap.
+ *
+ * @param st The statistics tree.
+ * @param pinfo The packet info.
+ * @param edt Data about the dissection.
+ * @param p A pointer to the statistics struct.
+ * @return TRUE if successful; FALSE otherwise.
+ */
 static int ethereum_discovery_stats_tree_packet(stats_tree *st,
                                                 packet_info *pinfo _U_,
                                                 epan_dissect_t *edt _U_,
@@ -612,11 +724,22 @@ static int ethereum_discovery_stats_tree_packet(stats_tree *st,
   return TRUE;
 }
 
+/**
+ * Registers the statitics trees for the Ethereum discovery protocol.
+ */
 static void register_ethereum_stat_trees(void) {
   stats_tree_register_plugin("ethereum", "ETH", "Ethereum/Discovery protocol stats", 0,
                              ethereum_discovery_stats_tree_packet, ethereum_discovery_stats_tree_init, NULL);
 }
 
+/**
+ * Initializes the Service Response Times table for the Ethereum discovery protocol.
+ *
+ * @param srt Data about the registration.
+ * @param srt_array The array of SRT tables.
+ * @param gui_callback GUI callback.
+ * @param gui_data GUI data.
+ */
 static void ethereum_srt_table_init(struct register_srt *srt _U_, GArray *srt_array,
                                     srt_gui_init_cb gui_callback, void *gui_data) {
   srt_stat_table *eth_srt_table;
@@ -626,6 +749,16 @@ static void ethereum_srt_table_init(struct register_srt *srt _U_, GArray *srt_ar
   init_srt_table_row(eth_srt_table, 1, "FIND_NODE->NODES response time");
 }
 
+/**
+ * Callback called by Wireshark whenever a stat is published on the tap, giving us a chance to
+ * populate the SRT tables.
+ *
+ * @param pss Pointer to the SRT context.
+ * @param pinfo The packet info.
+ * @param edt Dissection data.
+ * @param prv A pointer to the statistics struct.
+ * @return TRUE if successful; FALSE otherwise.
+ */
 static int ethereum_srt_table_packet(void *pss,
                                      packet_info *pinfo,
                                      epan_dissect_t *edt _U_,
@@ -641,10 +774,16 @@ static int ethereum_srt_table_packet(void *pss,
   return TRUE;
 }
 
+/**
+ * Registers the Service Response Times table for the Ethereum discovery protocol.
+ */
 static void register_ethereum_srt_table(void) {
   register_srt_table(proto_ethereum, "ethereum", 1, ethereum_srt_table_packet, ethereum_srt_table_init, NULL);
 }
 
+/**
+ * Registers the protocol with Wireshark.
+ */
 void proto_register_ethereum(void) {
   static hf_register_info hf[] = {
 
@@ -796,7 +935,7 @@ void proto_register_ethereum(void) {
 
   nstime_set_unset(&unset_time);
 
-  /* Setup protocol subtree array */
+  // Setup protocol subtree array.
   static gint *ett[] = {
       &ett_ethereum_disc_toplevel,
       &ett_ethereum_disc_packetdata,
@@ -805,15 +944,20 @@ void proto_register_ethereum(void) {
 
   proto_ethereum = proto_register_protocol("Ethereum discovery protocol", "ETH discovery", "ethereum.disc");
 
+  // Register dissector.
   ethereum_disc_dtor_handle = create_dissector_handle(dissect_ethereum_heur, proto_ethereum);
   proto_register_field_array(proto_ethereum, hf, array_length(hf));
   proto_register_subtree_array(ett, array_length(ett));
 
+  // Register statistics-related features.
   ethereum_tap = register_tap("ethereum");
   register_ethereum_stat_trees();
   register_ethereum_srt_table();
 }
 
+/**
+ * Registers the handoff to the Ethereum discovery protocol.
+ */
 void proto_reg_handoff_ethereum(void) {
   heur_dissector_add("udp", dissect_ethereum_heur, "Ethereum (devp2p) discovery", "ETH discovery",
                      proto_ethereum, HEURISTIC_ENABLE);

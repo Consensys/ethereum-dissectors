@@ -26,18 +26,30 @@
 
 #include <epan/packet.h>
 
+// RLP element types.
 typedef enum rlp_type {
   VALUE,
   LIST
-} rlp_type;
+} rlp_type_t;
 
+// A struct that stores metadata about an RLP element
 typedef struct rlp_element {
-  rlp_type type;
-  guint byte_length;
-  guint data_offset;
-  guint next_offset;
+  rlp_type_t type;    // The element type
+  guint byte_length;  // The length in bytes of the payload of this element.
+  guint data_offset;  // The absolute offset in the buffer where the data actually starts within this element.
+  guint next_offset;  // The absolute offset in the buffer of the next element, or 0 iff end of buffer.
 } rlp_element_t;
 
+/**
+ * Introspects an RLP element starting at the position in the buffer designated by offset.
+ * This function updates the incoming RLP element with the metadata concerning the introspected item.
+ * It is recommended to pass in a variable assigned in the stack.
+ *
+ * @param tvb The buffer.
+ * @param offset The offset of the element to analyze.
+ * @param rlp The RLP element struct to update with the metadata.
+ * @return TRUE if the RLP introspection succeeded; FALSE otherwise.
+ */
 int rlp_next(tvbuff_t *tvb, guint offset, rlp_element_t *rlp);
 
 #endif //__PACKET_ETHEREUM_H__
