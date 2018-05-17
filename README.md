@@ -61,9 +61,9 @@ $ ninja
 
 # Team
 
-* Raúl Kripalani <raul.kripalani@consensys.net> -- project lead
-* Zhenyang Shi <zhenyang.shi@consensys.net>
-* Scott Whittington <scott.whittington@consensys.net>
+* Raúl Kripalani: raul [dot] kripalani [at] [this repo's org] [dot] net -- project lead
+* Zhenyang Shi: zhenyang [dot] shi [at] [this repo's org] [dot] net
+* Scott Whittington: scott [dot] whittington [at] [this repo's org] [dot] net
 
 # Why this project?
 
