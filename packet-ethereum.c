@@ -46,7 +46,7 @@ int rlp_next(tvbuff_t *tvb, guint offset, rlp_element_t *rlp) {
       return FALSE;
     }
     rlp->data_offset = offset + 1 + l;
-    rlp->byte_length = tvb_get_bits32(tvb, (offset + 1) * 8, l * 8, BIG_ENDIAN);
+    rlp->byte_length = tvb_get_bits32(tvb, (offset + 1) * 8, l * 8, ENC_BIG_ENDIAN);
   } else if (prefix >= 0xc0 && prefix <= 0xf7) {
     // A list whose byte length is less than 55 bytes.
     rlp->type = LIST;
@@ -61,7 +61,7 @@ int rlp_next(tvbuff_t *tvb, guint offset, rlp_element_t *rlp) {
       return FALSE;
     }
     rlp->data_offset = offset + 1 + l;
-    rlp->byte_length = tvb_get_bits32(tvb, (offset + 1) * 8, l * 8, BIG_ENDIAN);
+    rlp->byte_length = tvb_get_bits32(tvb, (offset + 1) * 8, l * 8, ENC_BIG_ENDIAN);
   }
   rlp->next_offset = tvb_captured_length_remaining(tvb, rlp->data_offset + rlp->byte_length) > 0 ?
                      rlp->data_offset + rlp->byte_length : 0;

@@ -126,7 +126,7 @@ static int st_node_packet_nodes_count = -1;
 
 // The statistics struct handled by the Ethereum discovery tap.
 // Exportable as other dissectors can consume from our tap.
-typedef struct ethereum_disc_stat {
+typedef struct _ethereum_disc_stat {
   gboolean is_request;
   gboolean has_request;
   packet_type_e packet_type;
@@ -135,7 +135,7 @@ typedef struct ethereum_disc_stat {
 } ethereum_disc_stat_t;
 
 // The struct where we store state concerning a conversation between two parties.
-static typedef struct ethereum_disc_conv {
+typedef struct _ethereum_disc_conv {
   guint32 total_count;
   guint32 ping_count;
   guint32 pong_count;
@@ -149,7 +149,7 @@ static typedef struct ethereum_disc_conv {
 } ethereum_disc_conv_t;
 
 // Enhanced packet data, attached to the pinfo for rendering in header fields.
-static typedef struct ethereum_disc_enhanced_data {
+typedef struct _ethereum_disc_enhanced_data {
   guint32 seq;
   guint seqtype;
   nstime_t rt;
@@ -157,7 +157,7 @@ static typedef struct ethereum_disc_enhanced_data {
 } ethereum_disc_enhanced_data_t;
 
 // Represents a peer endpoint parsed from the discovery packets.
-static typedef struct endpoint {
+typedef struct _endpoint {
   guint32 ipv4_addr;
   ws_in6_addr *ipv6_addr;
   guint16 udp_port;
@@ -208,14 +208,14 @@ static ethereum_disc_endpoint_t decode_endpoint(tvbuff_t *packet_data,
 
   // UDP port.
   rlp_next(packet_data, rlp->next_offset, rlp);
-  ret.udp_port = tvb_get_guint16(packet_data, rlp->data_offset, BIG_ENDIAN);
+  ret.udp_port = tvb_get_guint16(packet_data, rlp->data_offset, ENC_BIG_ENDIAN);
   proto_tree_add_item(disc_packet, *fields[2], packet_data,
                       rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
   // TCP port.
   rlp_next(packet_data, rlp->next_offset, rlp);
   if (rlp->byte_length > 0) {
-    ret.tcp_port = tvb_get_guint16(packet_data, rlp->data_offset, BIG_ENDIAN);
+    ret.tcp_port = tvb_get_guint16(packet_data, rlp->data_offset, ENC_BIG_ENDIAN);
     proto_tree_add_item(disc_packet, *fields[3], packet_data,
                         rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
   }
