@@ -109,6 +109,7 @@ static int hf_ethereum_disc_nodes_nodes_ipv6 = -1;
 static int hf_ethereum_disc_nodes_nodes_udp_port = -1;
 static int hf_ethereum_disc_nodes_nodes_tcp_port = -1;
 static int hf_ethereum_disc_nodes_nodes_id = -1;
+static int hf_ethereum_disc_nodes_nodes_enode = -1;
 static int hf_ethereum_disc_nodes_expiration = -1;
 static int hf_ethereum_disc_nodes_length = -1;
 
@@ -464,6 +465,11 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   while (rlp->type == LIST) {
     ti = proto_tree_add_string(packet_tree, hf_ethereum_disc_nodes_node, packet_tvb,
                                rlp->data_offset, rlp->byte_length, "test");
+
+	//Stroe a backup of the current rlp for use in enode
+	rlp_element_t enode_rlp_backup = *rlp;
+	rlp_element_t *enode_rlp = &enode_rlp_backup;
+
     node_tree = proto_item_add_subtree(ti, ett_ethereum_disc_nodes);
     decode_endpoint(packet_tvb, node_tree, rlp, recipient_endpoint_fields);
 
@@ -471,6 +477,54 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
     rlp_next(packet_tvb, rlp->next_offset, rlp);
     proto_tree_add_item(node_tree, hf_ethereum_disc_nodes_nodes_id, packet_tvb,
                         rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
+
+	// Node Enode Address.
+	proto_item *enode_address = proto_tree_add_string(node_tree, hf_ethereum_disc_nodes_nodes_enode, packet_tvb,
+		enode_rlp->data_offset, enode_rlp->byte_length, "enode://");
+	guint enode_info;
+	guint tcp_offset;
+	guint udp_offset;
+
+	// Print public key byte by byte
+	for (int j = 0; j < 64; j++) {
+		enode_info = tvb_get_guint8(packet_tvb, rlp->data_offset + j);
+		proto_item_append_text(enode_address, "%02x", enode_info);
+	}
+	proto_item_append_text(enode_address, "@");
+	rlp_next(packet_tvb, enode_rlp->data_offset, enode_rlp);
+
+	// Print IP address byte by byte
+	for (int j = 0; j < 4; j++) {
+		enode_info = tvb_get_guint8(packet_tvb, enode_rlp->data_offset + j);
+		proto_item_append_text(enode_address, "%d", enode_info);
+		if (j != 3) {
+			proto_item_append_text(enode_address, ".");
+		}
+	}
+	proto_item_append_text(enode_address, ":");
+
+	//Store UDP/TCP(optional) port offset
+	rlp_next(packet_tvb, enode_rlp->next_offset, enode_rlp);
+	udp_offset = enode_rlp->data_offset;
+	rlp_next(packet_tvb, enode_rlp->next_offset, enode_rlp);
+	if (enode_rlp->byte_length == 2) {
+		tcp_offset = enode_rlp->data_offset;
+	}
+	else {
+		tcp_offset = -1; // No TCP Port
+	}
+
+	//Print TCP port if possible
+	if (tcp_offset != -1) {
+		enode_info = tvb_get_guint16(packet_tvb, tcp_offset, ENC_BIG_ENDIAN);
+		proto_item_append_text(enode_address, "%d", enode_info);
+	}
+	proto_item_append_text(enode_address, "?discport=");
+
+	//Print UDP port
+	enode_info = tvb_get_guint16(packet_tvb, udp_offset, ENC_BIG_ENDIAN);
+	proto_item_append_text(enode_address, "%d", enode_info);
+
     if (rlp->next_offset == 0) {
       break;
     }
@@ -923,6 +977,10 @@ void proto_register_ethereum(void) {
       {&hf_ethereum_disc_nodes_nodes_id,
        {"(NODES) Node ID", "ethereum.disc.packet.nodes.node.id", FT_BYTES, BASE_NONE,
         NULL, 0X0, NULL, HFILL}},
+
+	  { &hf_ethereum_disc_nodes_nodes_enode,
+	   { "(NODES) Node Enode Address", "ethereum.disc.packet.nodes.node.enode_address", FT_STRING, BASE_NONE,
+		NULL, 0X0, NULL, HFILL } },
 
       {&hf_ethereum_disc_nodes_expiration,
        {"(NODES) Expiration", "ethereum.disc.packet.nodes.expiration", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL,
