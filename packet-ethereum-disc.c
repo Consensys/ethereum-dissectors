@@ -481,9 +481,9 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
 	// Node Enode Address.
 	proto_item *enode_address = proto_tree_add_string(node_tree, hf_ethereum_disc_nodes_nodes_enode, packet_tvb,
 		enode_rlp->data_offset, enode_rlp->byte_length, "enode://");
-	guint enode_info;
-	guint tcp_offset;
-	guint udp_offset;
+	gint enode_info;
+	gint tcp_offset;
+	gint udp_offset;
 
 	// Print public key byte by byte
 	for (int j = 0; j < 64; j++) {
