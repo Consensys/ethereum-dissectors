@@ -30,6 +30,7 @@
 #include <epan/srt_table.h>
 #include <epan/exceptions.h>
 #include <epan/show_exception.h>
+#include <epan/to_str.h>
 
 #define MIN_ETHDEVP2PDISCO_LEN 98
 #define MAX_ETHDEVP2PDISCO_LEN 1280
@@ -192,7 +193,7 @@ static ethereum_disc_endpoint_t decode_endpoint(tvbuff_t *packet_data,
                                                 proto_tree *disc_packet,
                                                 rlp_element_t *rlp,
                                                 const int *fields[4]) {
-  ethereum_disc_endpoint_t ret;
+  ethereum_disc_endpoint_t ret = { .ipv4_addr = 0, .ipv6_addr = NULL, .tcp_port = 0, .udp_port = 0 };
 
   // IP addr.
   rlp_next(packet_data, rlp->data_offset, rlp);
@@ -462,68 +463,39 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   guint i = 0;
   proto_tree *node_tree;
   while (rlp->type == LIST) {
+    ethereum_disc_endpoint_t ep;
+
     ti = proto_tree_add_string(packet_tree, hf_ethereum_disc_nodes_node, packet_tvb,
                                rlp->data_offset, rlp->byte_length, "enode://");
 
-	//Stroe a backup of the current rlp for use in enode
-	rlp_element_t enode_rlp_backup = *rlp;
-	rlp_element_t *enode_rlp = &enode_rlp_backup;
-
     node_tree = proto_item_add_subtree(ti, ett_ethereum_disc_nodes);
-    decode_endpoint(packet_tvb, node_tree, rlp, recipient_endpoint_fields);
+    ep = decode_endpoint(packet_tvb, node_tree, rlp, recipient_endpoint_fields);
 
     // Node ID.
     rlp_next(packet_tvb, rlp->next_offset, rlp);
     proto_tree_add_item(node_tree, hf_ethereum_disc_nodes_nodes_id, packet_tvb,
                         rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
-	// Node Enode Address.
-	gint enode_info;
-	gint tcp_offset;
-	gint udp_offset;
-	gint tcp_port;
-	gint udp_port;
+    proto_item_append_text(ti, "%s", tvb_bytes_to_str(wmem_packet_scope(), packet_tvb, rlp->data_offset, rlp->byte_length));
+    proto_item_append_text(ti, "@");
 
-	// Print public key byte by byte
-	for (int j = 0; j < 64; j++) {
-		enode_info = tvb_get_guint8(packet_tvb, rlp->data_offset + j);
-		proto_item_append_text(ti, "%02x", enode_info);
-	}
-	proto_item_append_text(ti, "@");
-	rlp_next(packet_tvb, enode_rlp->data_offset, enode_rlp);
+    if (ep.ipv6_addr) {
+      address addr = ADDRESS_INIT(AT_IPv6, 16, &ep.ipv6_addr->bytes);
+      proto_item_append_text(ti, "%s", address_to_str(wmem_packet_scope(), &addr));
+    } else {
+      address addr = ADDRESS_INIT(AT_IPv4, 4, &ep.ipv4_addr);
+      proto_item_append_text(ti, "%s", address_to_str(wmem_packet_scope(), &addr));
+    }
 
-	// Print IP address byte by byte
-	for (int j = 0; j < 4; j++) {
-		enode_info = tvb_get_guint8(packet_tvb, enode_rlp->data_offset + j);
-		proto_item_append_text(ti, "%d", enode_info);
-		if (j != 3) {
-			proto_item_append_text(ti, ".");
-		}
-	}
-	proto_item_append_text(ti, ":");
+    proto_item_append_text(ti, ":");
 
-	//Store UDP/TCP(optional) port offset
-	rlp_next(packet_tvb, enode_rlp->next_offset, enode_rlp);
-	udp_offset = enode_rlp->data_offset;
-	rlp_next(packet_tvb, enode_rlp->next_offset, enode_rlp);
-	if (enode_rlp->byte_length == 2) {
-		tcp_offset = enode_rlp->data_offset;
-	}
-	else {
-		tcp_offset = -1; // No TCP Port
-	}
+    if (ep.tcp_port) {
+      proto_item_append_text(ti, "%d", ep.tcp_port);
+    }
 
-	//Print TCP port if possible
-	if (tcp_offset != -1) {
-		tcp_port = tvb_get_guint16(packet_tvb, tcp_offset, ENC_BIG_ENDIAN);
-		proto_item_append_text(ti, "%d", tcp_port);
-	}
-
-	//Print UDP port
-	udp_port = tvb_get_guint16(packet_tvb, udp_offset, ENC_BIG_ENDIAN);
-	if (tcp_offset != -1 && udp_port != tcp_port) {
-		proto_item_append_text(ti, "?discport=%d", udp_port);
-	}
+    if (ep.tcp_port != ep.udp_port) {
+      proto_item_append_text(ti, "?discport=%d", ep.udp_port);
+    }
 
     if (rlp->next_offset == 0) {
       break;
