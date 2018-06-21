@@ -1,109 +1,91 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-import subprocess
+import itertools
 import json
+import subprocess
 import unittest
 
-
-class EthereumDiscoveryTesting(unittest.TestCase):
+class EthereumDiscoveryDissectorTest(unittest.TestCase):
 
     def setUp(self):
-        output = subprocess.check_output(["../../wireshark-ninja/run/tshark", "-r", "./test.pcapng", "-T", "json"])
+        output = subprocess.check_output(["../wireshark-ninja/run/tshark", "-r", "./test/test.pcapng", "-T", "json"])
         self.pcap_output = json.loads(output)
+
+    def filter_by_type(self, packet_type):
+        predicate = lambda frame: frame.get("_source", {}).get("layers", {}).get("ethereum.disc", {}).get("ethereum.disc.packet", "") == packet_type;
+        extractor = lambda frame: frame["_source"]["layers"]["ethereum.disc"]
+        return itertools.imap(extractor, itertools.ifilter(predicate, self.pcap_output))
 
     def test_ping(self):
         ping_cnt = 0
-
-        for frame in self.pcap_output:
-                
+        for frame in self.filter_by_type("PING"):
+            ping_cnt += 1
             try:
-                temp = (frame["_source"]["layers"]["ethereum.disc"])
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.recipient.udp_port"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.sender.udp_port"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.expiration"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.version"]
+                frame["ethereum.disc.packet_type"]
+                frame["ethereum.disc.hash"]
             except:
-                continue
-            if (temp["ethereum.disc.packet"] == "PING"):
-                ping_cnt += 1
-                try:
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.recipient.udp_port"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.sender.udp_port"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.expiration"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.ping.version"]
-                    temp["ethereum.disc.packet_type"]
-                    temp["ethereum.disc.signature"]
-                    temp["ethereum.disc.hash"]
-                except:
-                    self.fail()
+                self.fail()
         self.assertEqual(ping_cnt, 967)
 
     def test_pong(self):
-        Pong = 0
-        for i in self.js:
+        pong_cnt = 0
+        for frame in self.filter_by_type("PONG"):
+            pong_cnt += 1
             try:
-                temp = (i["_source"]["layers"]["ethereum.disc"])
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.recipient.udp_port"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.expiration"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.ping_hash"]
+                frame["ethereum.disc.packet_type"]
+                frame["ethereum.disc.signature"]
+                frame["ethereum.disc.hash"]
             except:
-                continue
-            if (temp["ethereum.disc.packet"] == "PONG"):
-                Pong += 1
-                try:
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.recipient.udp_port"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.expiration"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.pong.ping_hash"]
-                    temp["ethereum.disc.packet_type"]
-                    temp["ethereum.disc.signature"]
-                    temp["ethereum.disc.hash"]
-                except:
-                    self.fail()
-        self.assertEqual(Pong, 403)
+                self.fail()
+        self.assertEqual(pong_cnt, 403)
 
-    def test_findNode(self):
-        findNode = 0
-        for i in self.js:
+    def test_find_node(self):
+        find_node_cnt = 0
+        for frame in self.filter_by_type("FIND_NODE"):
+            find_node_cnt += 1
             try:
-                temp = (i["_source"]["layers"]["ethereum.disc"])
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.find_node.expiration"]
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.find_node.target"]
+                frame["ethereum.disc.packet_type"]
+                frame["ethereum.disc.signature"]
+                frame["ethereum.disc.hash"]
             except:
-                continue
-            if (temp["ethereum.disc.packet"] == "FIND_NODE"):
-                findNode += 1
-                try:
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.find_node.expiration"]
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.find_node.target"]
-                    temp["ethereum.disc.packet_type"]
-                    temp["ethereum.disc.signature"]
-                    temp["ethereum.disc.hash"]
-                except:
-                    self.fail()
-        self.assertEqual(findNode, 80)
+                self.fail()
+        self.assertEqual(find_node_cnt, 80)
 
     def test_nodes(self):
-        nodes = 0
-        for i in self.js:
+        nodes_cnt = 0
+        for frame in self.filter_by_type("NODES"):
+            nodes_cnt += 1
             try:
-                temp = (i["_source"]["layers"]["ethereum.disc"])
+                frame["ethereum.disc.packet_tree"]["ethereum.disc.packet.nodes.expiration"]
+                frame["ethereum.disc.packet_type"]
+                frame["ethereum.disc.signature"]
+                frame["ethereum.disc.hash"]
             except:
-                continue
-            if (temp["ethereum.disc.packet"] == "NODES"):
-                nodes += 1
-                try:
-                    temp["ethereum.disc.packet_tree"]["ethereum.disc.packet.nodes.expiration"]
-                    temp["ethereum.disc.packet_type"]
-                    temp["ethereum.disc.signature"]
-                    temp["ethereum.disc.hash"]
-                except:
-                    self.fail()
-        self.assertEqual(nodes, 144)
+                self.fail()
+        self.assertEqual(nodes_cnt, 144)
 
     def test_error(self):
         error = 0
-        for i in self.js:
+        for i in self.pcap_output:
             try:
-                temp = (i["_source"]["layers"]["ethereum.disc"])
+                frame = (i["_source"]["layers"]["ethereum.disc"])
             except:
                 continue
-            if (temp["ethereum.disc.packet"] != "PING" and
-                        temp["ethereum.disc.packet"] != "PONG" and
-                        temp["ethereum.disc.packet"] != "FIND_NODE" and
-                        temp["ethereum.disc.packet"] != "NODES"):
+            if (frame["ethereum.disc.packet"] != "PING" and
+                        frame["ethereum.disc.packet"] != "PONG" and
+                        frame["ethereum.disc.packet"] != "FIND_NODE" and
+                        frame["ethereum.disc.packet"] != "NODES"):
                 error += 1
         self.assertEqual(error, 0)
-
 
 unittest.main()
