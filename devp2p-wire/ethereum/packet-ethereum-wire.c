@@ -2,7 +2,9 @@
 
 #include "aes256.h"
 
+#include <epan/dissectors/packet-tcp.h>
 #include <epan/packet.h>
+#include <epan/prefs.h>
 #include <epan/proto_data.h>
 #include <epan/conversation.h>
 
@@ -17,7 +19,8 @@
 #define WRONG			0x00
 #define HEADER			0x01
 #define FRAME			0x02
-#define MAC				0x03
+#define FRAMEMAC		0x03
+#define MAC				0x04
 
 typedef struct _big_number_t {
 	guint most;
@@ -36,6 +39,7 @@ typedef struct _devp2p_packet_info_t {
 	gint type;
 	guint data_size;
 	unsigned char *data;
+	guint offset;
 } devp2p_packet_info_t;
 
 static int proto_devp2p_wire = -1;
@@ -80,13 +84,13 @@ static int is_big_number_zero(big_number_t *big_number) {
 }
 
 static void set_ctr(rfc3686_blk *ctr, guint offset) {
-	ctr->ctr[0] = offset / (256 * 256 * 256);
-	offset = offset % (256 * 256 * 256);
-	ctr->ctr[1] = offset / (256 * 256 * 256);
-	offset = offset % (256 * 256);
-	ctr->ctr[2] = offset / (256 * 256);
-	offset = offset % (256);
-	ctr->ctr[3] = offset / 256;
+	ctr->ctr[0] = offset / (256 * 256 * 256 * 16);
+	offset = offset % (256 * 256 * 256 * 16);
+	ctr->ctr[1] = offset / (256 * 256 * 16);
+	offset = offset % (256 * 256 * 16);
+	ctr->ctr[2] = offset / (256 * 16);
+	offset = offset % (256 * 16);
+	ctr->ctr[3] = offset / 16;
 }
 
 static void decrypt_data(tvbuff_t *tvb, guint length, devp2p_conv_t *secret, devp2p_packet_info_t *devp2p_packet_info) {
@@ -102,7 +106,7 @@ static void decrypt_data(tvbuff_t *tvb, guint length, devp2p_conv_t *secret, dev
 	aes256_setCtrBlk(&ctx, &ctr);
 	//Decrypting
 	unsigned char *buf;
-	guint digest_length = secret->current_offset % 256;
+	guint digest_length = secret->current_offset % 16;
 	buf = (unsigned char *)wmem_alloc(wmem_file_scope(), (length + digest_length) * sizeof(unsigned char));
 	for (guint i = 0; i < digest_length; i++) {
 		buf[i] = 0;
@@ -197,6 +201,7 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 						//Decrypt
 						length -= MAC_LENGTH;
 						devp2p_packet_info->type = HEADER;
+						devp2p_packet_info->offset = secret->current_offset;
 						decrypt_data(tvb, length, secret, devp2p_packet_info);
 						//Set next state
 						secret->current_offset += length;
@@ -219,11 +224,13 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 						//MAC inside
 						length -= MAC_LENGTH;
 						secret->state = START_HEADER;
-						devp2p_packet_info->type = FRAME || MAC;
+						devp2p_packet_info->type = FRAMEMAC;
+						devp2p_packet_info->offset = secret->current_offset;
 					}
 					else {
 						secret->frame_length -= length;
 						devp2p_packet_info->type = FRAME;
+						devp2p_packet_info->offset = secret->current_offset;
 					}
 					decrypt_data(tvb, length, secret, devp2p_packet_info);
 					//Set next state
@@ -234,6 +241,7 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 					break;
 				case END_MAC:
 					devp2p_packet_info->type = MAC;
+					devp2p_packet_info->offset = secret->current_offset;
 					//Set next state
 					secret->state = START_HEADER;
 					break;
@@ -241,19 +249,21 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 			p_add_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num, devp2p_packet_info);
 		}
 		devp2p_packet_info = (devp2p_packet_info_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num);
-		col_append_fstr(pinfo->cinfo, COL_INFO, "Type: %x, Length: %d", devp2p_packet_info->type, tvb_captured_length(tvb));
 		if (devp2p_packet_info->type == WRONG) {
 			return FALSE;
 		}
 		//Display
 		col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PWIRE");
-		proto_tree *ethdevp2p_wire_tree;
-		proto_item *ti;
-		ethdevp2p_wire_tree = proto_item_add_subtree(tree, ett_devp2p_wire);
-		ti = proto_tree_add_string(ethdevp2p_wire_tree, hf_devp2p_wire_raw_message, tvb, 0, -1, "Raw message: ");
-		for (guint i = 0; i < devp2p_packet_info->data_size; i++) {
-			col_append_fstr(pinfo->cinfo, COL_INFO, "%02x", devp2p_packet_info->data[i]);
-			proto_item_append_text(ti, "%02x", devp2p_packet_info->data[i]);
+		col_append_fstr(pinfo->cinfo, COL_INFO, "Type: %x, Length: %d, offset: %d|||", devp2p_packet_info->type, tvb_captured_length(tvb), devp2p_packet_info->offset);
+		if (!(devp2p_packet_info->type == MAC)) {
+			proto_tree *ethdevp2p_wire_tree;
+			proto_item *ti;
+			ethdevp2p_wire_tree = proto_item_add_subtree(tree, ett_devp2p_wire);
+			ti = proto_tree_add_string(ethdevp2p_wire_tree, hf_devp2p_wire_raw_message, tvb, 0, -1, "Raw message: ");
+			for (guint i = 0; i < devp2p_packet_info->data_size; i++) {
+				col_append_fstr(pinfo->cinfo, COL_INFO, "%02x", devp2p_packet_info->data[i]);
+				proto_item_append_text(ti, "%02x", devp2p_packet_info->data[i]);
+			}
 		}
 		return TRUE;
 	}
