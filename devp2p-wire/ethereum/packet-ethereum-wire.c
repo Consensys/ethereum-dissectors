@@ -60,6 +60,7 @@ typedef struct _devp2p_packet_info_t {
 	unsigned char *data;		/* The decrypted content. */
 	guint offset;				/* Initial AES counter value for this frame. */
 	gboolean update;			/* Used as a trigger to update the AES counter in this conversation. */
+	guint visited_times;		/* Number of this packet being visited */
 } devp2p_packet_info_t;
 
 /**
@@ -188,22 +189,16 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 		/* Create Conversation, send data towards actual devp2p-wire dissector */
 		if (!PINFO_FD_VISITED(pinfo)) {
 			conversation_t *conversation;
-			conversation = find_conversation(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR_B | NO_PORT_B);
-			if (conversation == NULL) {
-				conversation = conversation_new(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR2 | NO_PORT2);
-			}
+			conversation = conversation_new(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR2 | NO_PORT2);
+			/* Add data */
 			devp2p_conv_t *secret;
-			secret = (devp2p_conv_t *)conversation_get_proto_data(conversation, proto_devp2p_wire);
-			if (!secret) {
-				/* Add data */
-				secret = wmem_new(wmem_file_scope(), devp2p_conv_t);
-				secret->current_offset = 0;
-				for (int i = 0; i < 32; i++) {
-					secret->aes_key[i] = tvb_get_guint8(tvb, offset++);
-				}
-				secret->start = TRUE;
-				conversation_add_proto_data(conversation, proto_devp2p_wire, (void *)secret);
+			secret = wmem_new(wmem_file_scope(), devp2p_conv_t);
+			secret->current_offset = 0;
+			for (int i = 0; i < 32; i++) {
+				secret->aes_key[i] = tvb_get_guint8(tvb, offset++);
 			}
+			secret->start = TRUE;
+			conversation_add_proto_data(conversation, proto_devp2p_wire, (void *)secret);
 		}
 		return TRUE;
 	}
@@ -231,7 +226,10 @@ static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_
 		/* The current offset of this wire conversation needs to be updated. */
 		secret->current_offset += devp2p_packet_info->length - 32;
 		devp2p_packet_info->update = FALSE;
+		devp2p_packet_info->visited_times = 2;
+		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Updated!\n\n\n", pinfo->num);
 	}
+	g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Dessected\n\n\n", pinfo->num);
 	return tvb_captured_length(tvb);
 }
 
@@ -251,13 +249,14 @@ static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, i
 	secret = (devp2p_conv_t *)conversation_get_proto_data(conversation, proto_devp2p_wire);
 	devp2p_packet_info_t *devp2p_packet_info;
 	devp2p_packet_info = (devp2p_packet_info_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num);
-	
-	if (devp2p_packet_info->length == 0) {
-		/* The length of the frame is not calculated yet. */
+
+	if (devp2p_packet_info->visited_times < 2) {
 		devp2p_packet_info->offset = secret->current_offset;
 		devp2p_packet_info->length = decrypt_frame_length(tvb, secret);
 		devp2p_packet_info->update = TRUE;
-		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Offset: %d, Length: %d\n\n\n", pinfo->num, devp2p_packet_info->offset, devp2p_packet_info->length);
+		devp2p_packet_info->visited_times = 1;
+		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "%d, Frame: %d, offset: %d, length: %d\n\n\n", 
+			devp2p_packet_info->visited_times, pinfo->num, secret->current_offset, devp2p_packet_info->length);
 	}
 	return devp2p_packet_info->length;
 }
@@ -301,6 +300,7 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 				devp2p_packet_info->type = RLPX_PACKET;
 			}
 			devp2p_packet_info->length = 0;
+			devp2p_packet_info->visited_times = 0;
 			p_add_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num, devp2p_packet_info);
 		}
 		if (devp2p_packet_info->type == HANDSHAKE) {
