@@ -125,7 +125,7 @@ static void decrypt_aes_256_ctr_data(tvbuff_t *tvb, guint length, devp2p_conv_t 
 * @param secret - The secret (aes-key, initial counter value) of this wire conversation.
 * @param devp2p_packet_info - The frame data.
 */
-static void decrypt_frame_length(tvbuff_t *tvb, devp2p_conv_t *secret, devp2p_packet_info_t *devp2p_packet_info) {
+static guint decrypt_frame_length(tvbuff_t *tvb, devp2p_conv_t *secret) {
 	devp2p_packet_info_t *temp;
 	temp = wmem_new(wmem_file_scope(), devp2p_packet_info_t);
 	decrypt_aes_256_ctr_data(tvb, HEADER_LENGTH - MAC_LENGTH, secret, temp);
@@ -138,8 +138,8 @@ static void decrypt_frame_length(tvbuff_t *tvb, devp2p_conv_t *secret, devp2p_pa
 		length = (length / 16 + 1) * 16;
 	}
 	length += 48;
-	devp2p_packet_info->length = length;
 	wmem_free(wmem_file_scope(), temp);
+	return length;
 }
 
 /**
@@ -255,7 +255,7 @@ static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, i
 	if (devp2p_packet_info->length == 0) {
 		/* The length of the frame is not calculated yet. */
 		devp2p_packet_info->offset = secret->current_offset;
-		decrypt_frame_length(tvb, secret, devp2p_packet_info);
+		devp2p_packet_info->length = decrypt_frame_length(tvb, secret);
 		devp2p_packet_info->update = TRUE;
 		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Offset: %d, Length: %d\n\n\n", pinfo->num, devp2p_packet_info->offset, devp2p_packet_info->length);
 	}
