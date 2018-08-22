@@ -132,6 +132,11 @@ static int hf_ethereum_disc_topic_nodes_echo = -1;
 static int hf_ethereum_disc_topic_query_topic = -1;
 static int hf_ethereum_disc_topic_query_expiration = -1;
 
+// TOPIC_REGISTER packet.
+static int hf_ethereum_disc_topic_register_topic = -1;
+static int hf_ethereum_disc_topic_register_idx = -1;
+static int hf_ethereum_disc_topic_register_pong = -1;
+
 // For tap.
 static int ethereum_tap = -1;
 
@@ -704,6 +709,48 @@ static int process_topic_nodes_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
+static int process_topic_register_msg(tvbuff_t *packet_tvb,
+                                      proto_tree *packet_tree,
+                                      packet_info *pinfo _U_,
+                                      rlp_element_t *rlp,
+                                      ethereum_disc_stat_t *st _U_,
+                                      ethereum_disc_conv_t *conv _U_,
+                                      ethereum_disc_enhanced_data_t *efdata _U_) {
+
+  // Move to Topic List
+  rlp_next(packet_tvb, rlp->data_offset, rlp);
+
+  guint i = 0;
+  guint topic_list_end = rlp->data_offset + rlp->byte_length;
+  if (rlp->byte_length > 0) {
+    // List is not empty, move into the first element.
+    rlp_next(packet_tvb, rlp->data_offset, rlp);
+  }
+  while (rlp->data_offset < topic_list_end) {
+    i++;
+    proto_tree_add_item(packet_tree, hf_ethereum_disc_topic_register_topic, packet_tvb,
+                        rlp->data_offset, rlp->byte_length, ENC_ASCII);
+    // Onto the next element.
+    rlp_next(packet_tvb, rlp->next_offset, rlp);
+  }
+
+  // Idx.
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_topic_register_idx, packet_tvb,
+                      rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
+
+  // Pong
+  rlp_next(packet_tvb, rlp->next_offset, rlp);
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_topic_register_pong, packet_tvb,
+                      rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
+
+  // Enhance packet info with # of topics.
+  char more_info[64];
+  g_snprintf(more_info, sizeof(more_info), " (%d topics)", i);
+  col_append_str(pinfo->cinfo, COL_INFO, more_info);
+
+  return TRUE;
+}
+
 /**
  * Retrieves an existing conversation for this packet, or initialises a new one (and saves it).
  *
@@ -858,8 +905,7 @@ static int dissect_ethereum_discv5(tvbuff_t *tvb,
       // both, we avoid duplication and get correctly linking of either of them to the NODES
       // response.
       [FIND_NODEHASH] = &process_findnode_msg,
-      // TODO
-      // [TOPIC_REGISTER] = &process_topic_register_msg,
+      [TOPIC_REGISTER] = &process_topic_register_msg,
       [TOPIC_QUERY] = &process_topic_query_msg,
       [TOPIC_NODES] = &process_topic_nodes_msg,
   };
@@ -1240,7 +1286,20 @@ void proto_register_ethereum(void) {
 
       {&hf_ethereum_disc_topic_nodes_echo,
        {"Echo", "ethereum.disc.packet.topic_nodes.echo", FT_BYTES, BASE_NONE,
+        NULL, 0X0, NULL, HFILL}},
+
+      {&hf_ethereum_disc_topic_register_topic,
+       {"(TOPIC_REGISTER) Topic", "ethereum.disc.packet.topic_register.topic", FT_STRING, BASE_NONE,
+        NULL, 0X0, NULL, HFILL}},
+
+      {&hf_ethereum_disc_topic_register_idx,
+       {"(TOPIC_REGISTER) Idx", "ethereum.disc.packet.topic_register.idx", FT_UINT32, BASE_DEC,
+        NULL, 0X0, NULL, HFILL}},
+
+      {&hf_ethereum_disc_topic_register_pong,
+       {"(TOPIC_REGISTER) Pong", "ethereum.disc.packet.topic_register.pong", FT_BYTES, BASE_NONE,
         NULL, 0X0, NULL, HFILL}}
+
   };
 
   nstime_set_unset(&unset_time);
