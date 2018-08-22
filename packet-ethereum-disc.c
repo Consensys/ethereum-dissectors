@@ -466,13 +466,13 @@ static int process_findnode_msg(tvbuff_t *packet_tvb,
   return TRUE;
 }
 
-static void process_nodes_list(tvbuff_t *packet_tvb,
-                               proto_tree *packet_tree,
-                               packet_info *pinfo,
-                               rlp_element_t *rlp,
-                               ethereum_disc_stat_t *st,
-                               ethereum_disc_conv_t *conv _U_,
-                               ethereum_disc_enhanced_data_t *efdata _U_) {
+static void decode_nodes_list(tvbuff_t *packet_tvb,
+                              proto_tree *packet_tree,
+                              packet_info *pinfo,
+                              rlp_element_t *rlp,
+                              ethereum_disc_stat_t *st,
+                              ethereum_disc_conv_t *conv _U_,
+                              ethereum_disc_enhanced_data_t *efdata _U_) {
   proto_item *ti;
 
   static const int *recipient_endpoint_fields[] = {
@@ -565,7 +565,7 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
 
   // Node list.
   rlp_next(packet_tvb, rlp->data_offset, rlp);
-  process_nodes_list(packet_tvb, packet_tree, pinfo, rlp, st, conv, efdata);
+  decode_nodes_list(packet_tvb, packet_tree, pinfo, rlp, st, conv, efdata);
 
   // Expiration
   proto_tree_add_item(packet_tree, hf_ethereum_disc_nodes_expiration, packet_tvb,
@@ -675,7 +675,7 @@ static int process_topic_nodes_msg(tvbuff_t *packet_tvb,
                       rlp->data_offset, rlp->byte_length, ENC_BIG_ENDIAN);
 
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  process_nodes_list(packet_tvb, packet_tree, pinfo, rlp, st, conv, efdata);
+  decode_nodes_list(packet_tvb, packet_tree, pinfo, rlp, st, conv, efdata);
 
   if (!PINFO_FD_VISITED(pinfo)) {
     efdata->seqtype = ++conv->nodes_count;
@@ -784,6 +784,17 @@ static ethereum_disc_conv_t *get_conversation(packet_info *pinfo) {
   return ret;
 }
 
+static ethereum_disc_stat_t *init_disc_stat(void) {
+  ethereum_disc_stat_t *st;
+  st = wmem_new(wmem_packet_scope(), ethereum_disc_stat_t);
+  st->has_request = FALSE;
+  st->is_request = FALSE;
+  st->packet_type = UNKNOWN;
+  st->rq_time = unset_time;
+  st->node_count = 0;
+  return st;
+}
+
 /**
  * Performs the dissection of a discovery packet.
  *
@@ -813,13 +824,7 @@ static int dissect_ethereum(tvbuff_t *tvb,
       [NODES] = &process_nodes_msg
   };
 
-  st = wmem_new(wmem_packet_scope(), ethereum_disc_stat_t);
-  st->has_request = FALSE;
-  st->is_request = FALSE;
-  st->packet_type = UNKNOWN;
-  st->rq_time = unset_time;
-  st->node_count = 0;
-
+  st = init_disc_stat();
   conv = get_conversation(pinfo);
 
   col_set_str(pinfo->cinfo, COL_PROTOCOL, "Ethereum");
@@ -910,13 +915,7 @@ static int dissect_ethereum_discv5(tvbuff_t *tvb,
       [TOPIC_NODES] = &process_topic_nodes_msg,
   };
 
-  st = wmem_new(wmem_packet_scope(), ethereum_disc_stat_t);
-  st->has_request = FALSE;
-  st->is_request = FALSE;
-  st->packet_type = UNKNOWN;
-  st->rq_time = unset_time;
-  st->node_count = 0;
-
+  st = init_disc_stat();
   conv = get_conversation(pinfo);
 
   col_set_str(pinfo->cinfo, COL_PROTOCOL, "Ethereum");
@@ -927,7 +926,6 @@ static int dissect_ethereum_discv5(tvbuff_t *tvb,
   ethereum_tree = proto_item_add_subtree(tree, ett_ethereum_disc_toplevel);
 
   // Message hash and signature.
-  // proto_tree_add_item(ethereum_tree, hf_ethereum_disc_msg_hash, tvb, 0, ETHEREUM_DISC_HASH_LEN, ENC_BIG_ENDIAN);
   proto_tree_add_item(ethereum_tree, hf_ethereum_disc_msg_sig, tvb, 0,
                       ETHEREUM_DISC_SIGNATURE_LEN, ENC_BIG_ENDIAN);
 
