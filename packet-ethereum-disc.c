@@ -579,8 +579,6 @@ static int process_nodes_msg(tvbuff_t *packet_tvb,
   ti = proto_tree_add_uint(parent, hf_ethereum_disc_seqtype, packet_tvb, 0, 0, efdata->seqtype);
   PROTO_ITEM_SET_GENERATED(ti);
 
-  // TODO: In v5, this may also be in response to a FIND_NODEHASH msg, so must attempt to
-  // link to one of those is no FIND_NODE link is found.
   // Link the FIND_NODE request.
   guint32 findnodesref = GPOINTER_TO_UINT(wmem_map_lookup(conv->corr, GUINT_TO_POINTER(pinfo->num)));
   if (findnodesref) {
@@ -855,8 +853,12 @@ static int dissect_ethereum_discv5(tvbuff_t *tvb,
       [PONG] = &process_pong_v5_msg,
       [FIND_NODE] = &process_findnode_msg,
       [NODES] = &process_nodes_msg,
+      // FIND_NODEHASH is identical to FIND_NODE, except the length of their target field is
+      // different (64 for the former and 32 for the latter). By using process_findnode_msg for
+      // both, we avoid duplication and get correctly linking of either of them to the NODES
+      // response.
+      [FIND_NODEHASH] = &process_findnode_msg,
       // TODO
-      // [FIND_NODEHASH] = &process_find_nodehash_msg,
       // [TOPIC_REGISTER] = &process_topic_register_msg,
       [TOPIC_QUERY] = &process_topic_query_msg,
       [TOPIC_NODES] = &process_topic_nodes_msg,
