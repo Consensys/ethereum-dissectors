@@ -38,6 +38,7 @@ Here are the features currently supported by the Ethereum Discovery dissector (w
 
 ```
 $ cd ${WIRESHARK_SRC}
+$ # check out the latest 2.6 tag (could be higher)
 $ git checkout wireshark-2.6.2
 $ mkdir ../wireshark-ninja
 $ cd ../wireshark-ninja
