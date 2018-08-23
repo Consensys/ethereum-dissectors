@@ -39,8 +39,8 @@
 #define ETHEREUM_DISC_SIGNATURE_LEN 65
 #define ETHEREUM_DISC_PACKET_TYPE_IDX 97
 #define ETHEREUM_DISC_PACKET_DATA_START 98
-// ETHEREUM_DISC_SIGNATURE_LEN + 22 (len('temporary discovery v5'))
-#define ETHEREUM_DISCV5_PACKET_TYPE_IDX 87
+#define ETHEREUM_DISCV5_ID_STR "temporary discovery v5"
+#define ETHEREUM_DISCV5_PACKET_TYPE_IDX 87  // ETHEREUM_DISC_SIGNATURE_LEN + 22 (strlen(ETHEREUM_DISCV5_ID_STR))
 #define ETHEREUM_DISCV5_PACKET_DATA_START 88
 
 // Subtrees.
@@ -926,7 +926,7 @@ static int dissect_ethereum_discv5(tvbuff_t *tvb,
   ethereum_tree = proto_item_add_subtree(tree, ett_ethereum_disc_toplevel);
 
   // Message hash and signature.
-  proto_tree_add_item(ethereum_tree, hf_ethereum_disc_msg_sig, tvb, 0,
+  proto_tree_add_item(ethereum_tree, hf_ethereum_disc_msg_sig, tvb, strlen(ETHEREUM_DISCV5_ID_STR),
                       ETHEREUM_DISC_SIGNATURE_LEN, ENC_BIG_ENDIAN);
 
   // Packet type.
@@ -994,10 +994,9 @@ static gboolean dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_t
   }
 
   // https://github.com/ethereum/go-ethereum/blob/c4712bf96bc1bae4a5ad4600e9719e4a74bde7d5/p2p/discv5/udp.go#L149
-  static const gchar *discv5_id = "temporary discovery v5";
   gboolean is_discv5 = FALSE;
-  const gchar *version_prefix = tvb_get_string_enc(wmem_packet_scope(), tvb, 0, strlen(discv5_id), ENC_ASCII);
-  if (strcmp(version_prefix, discv5_id) == 0) {
+  const gchar *version_prefix = tvb_get_string_enc(wmem_packet_scope(), tvb, 0, strlen(ETHEREUM_DISCV5_ID_STR), ENC_ASCII);
+  if (strcmp(version_prefix, ETHEREUM_DISCV5_ID_STR) == 0) {
       is_discv5 = TRUE;
   } else {
       guint packet_type = tvb_get_guint8(tvb, ETHEREUM_DISC_PACKET_TYPE_IDX);
