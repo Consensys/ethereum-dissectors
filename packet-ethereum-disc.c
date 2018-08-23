@@ -363,9 +363,9 @@ static int process_pong_msg(tvbuff_t *packet_tvb,
 
   // Expiration.
   rlp_next(packet_tvb, rlp->next_offset, rlp);
-  // FIXME: Disabled for now as Expiration on v5 pong is broken: https://github.com/ethereum/go-ethereum/issues/17468
-  // proto_tree_add_item(packet_tree, hf_ethereum_disc_pong_expiration, packet_tvb,
-  //                     rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
+  // Expiration on v5 pong is broken: https://github.com/ethereum/go-ethereum/issues/17468
+  proto_tree_add_item(packet_tree, hf_ethereum_disc_pong_expiration, packet_tvb,
+                      rlp->data_offset, rlp->byte_length, ENC_TIME_SECS | ENC_BIG_ENDIAN);
 
   if (!PINFO_FD_VISITED(pinfo)) {
     efdata->seqtype = ++conv->pong_count;
