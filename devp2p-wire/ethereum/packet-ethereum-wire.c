@@ -30,11 +30,21 @@
 #include <epan/proto_data.h>
 #include <epan/conversation.h>
 
-#define	HEADER_LENGTH		32
-#define MAC_LENGTH			16
+#define	HEADER_LEN						32
+#define MAC_LEN							16
+#define LENGTH_LEN						3
 
-#define HANDSHAKE			0x01
-#define RLPX_PACKET			0x02
+/* To indicate the type of this packet (Handshake or rlpx frame) */
+typedef enum packet_type {
+	HANDSHAKE = 0x01,
+	RLPX_PACKET = 0x02
+} packet_type_e;
+
+/* To indicate the status of the pdu resembly */
+typedef enum pdu_status {
+	GET_LENGTH = 0x01,
+	VERIFY_LENGTH = 0x02
+} pdu_status_e;
 
 /* Subtrees. */
 static int proto_devp2p_wire = -1;
@@ -47,28 +57,38 @@ static int hf_devp2p_wire_raw_message;
 
 /* Information holds for each wire conversation. */
 typedef struct _devp2p_conv_t {
-	guint8 aes_key[32];			/* To hold the AES symmetric keys for this wire conversation. */
-	guint current_offset;		/* To give each frame an initial AES counter value. */
-	gboolean start;				/* To skip the encrypted handshake. */
+	guint8 aes_key[32];					/* To hold the AES symmetric keys for this wire conversation. */
+	guint current_offset;				/* To give each pdu an initial AES counter value. */
+	gboolean start;						/* To skip the encrypted handshake for incoming tcp traffic. */
+	guint pdu_count;					/* To count the tcp pdu number. */
+	pdu_status_e pdu_status;					/* To keep track of the pdu resembly status. */
 } devp2p_conv_t;
 
-/* Information holds for each frame in a wire conversation. */
+/* Information holds for each resembled tcp pdu. */
+typedef struct _devp2p_pdu_data_t {
+	guint8 pdu_id[5];					/* To store the pdu_id, which is consist of first four bytes in the packet and an initial offset. */
+	guint pdu_offset;					/* To store the initial AES counter value. */
+	guint pdu_length;					/* To store the length of this pdu. */
+	guint pdu_index;					/* To store the index of this pdu in this conversation. */
+	guint data_size;					/* The data size of the decrypted content. */
+	unsigned char *data;				/* The decrypted content. */
+	struct _devp2p_pdu_data_t *next;	/* To store the memory address of the next pdu information (linked data structure). */
+} devp2p_pdu_data_t;
+
+/* Information holds for each packet in a wire conversation. */
 typedef struct _devp2p_packet_info_t {
-	gint type;					/* To store if the packet is encrypted handshake. */
-	guint length;				/* The size of this frame */
-	guint data_size;			/* The data size of the decrypted content. */
-	unsigned char *data;		/* The decrypted content. */
-	guint offset;				/* Initial AES counter value for this frame. */
-	gboolean update;			/* Used as a trigger to update the AES counter in this conversation. */
-	guint visited_times;		/* Number of this packet being visited */
+	packet_type_e packet_type;			/* To store if the packet is encrypted handshake. */
+	gboolean update_secret;				/* To indicate if the dissector needs to update the secret. */
+	guint pdu_size;						/* The size of the pdu list associated with this packet. */
+	devp2p_pdu_data_t *head;			/* The head of the pdu list associated with this packet. */
 } devp2p_packet_info_t;
 
 /**
- * Set the aes256-ctr initial counter value to offset.
- *
- * @param ctr - The aes256-ctr decoder.
- * @param offset - The initial counter value.
- */
+* Set the aes256-ctr initial counter value to offset.
+*
+* @param ctr - The aes256-ctr decoder.
+* @param offset - The initial counter value.
+*/
 static void set_aes_ctr_value(rfc3686_blk *ctr, guint offset) {
 	ctr->ctr[0] = offset / (256 * 256 * 256 * 16);
 	offset = offset % (256 * 256 * 256 * 16);
@@ -80,14 +100,14 @@ static void set_aes_ctr_value(rfc3686_blk *ctr, guint offset) {
 }
 
 /**
-* Decrypt the packet using aes256ctr mode at a given length.
+* Decrypt the pdu length.
 *
 * @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
-* @param length - Only the given length of data in this packet will be decrypted.
 * @param secret - The secret (aes-key, initial counter value) of this wire conversation.
-* @param devp2p_packet_info - The frame data.
+* @param start_position - The start position in this tvb.
+* @return length - the decrypted pdu length.
 */
-static void decrypt_aes_256_ctr_data(tvbuff_t *tvb, guint length, devp2p_conv_t *secret, devp2p_packet_info_t *devp2p_packet_info) {
+static guint decrypt_length(tvbuff_t *tvb, devp2p_conv_t *secret, guint start_position) {
 	/* Set up cipher. */
 	rfc3686_blk ctr = {
 		{ 0x00, 0x00, 0x00, 0x00 },
@@ -98,56 +118,39 @@ static void decrypt_aes_256_ctr_data(tvbuff_t *tvb, guint length, devp2p_conv_t 
 	aes256_context ctx;
 	aes256_init(&ctx, secret->aes_key);
 	aes256_setCtrBlk(&ctx, &ctr);
-	/* Decrypting. */
+
+	/* Decrypting the first three bytes. */
 	unsigned char *buf;
 	guint digest_length = secret->current_offset % 16;
+	guint length = LENGTH_LEN;
 	buf = (unsigned char *)wmem_alloc(wmem_file_scope(), (length + digest_length) * sizeof(unsigned char));
 	for (guint i = 0; i < digest_length; i++) {
 		buf[i] = 0;
 	}
-	for (guint offset = 0; offset < length; offset++) {
-		buf[digest_length + offset] = tvb_get_guint8(tvb, offset);
+	for (guint i = 0; i < length; i++) {
+		buf[digest_length + i] = tvb_get_guint8(tvb, i + start_position);
 	}
 	aes256_encrypt_ctr(&ctx, buf, sizeof(unsigned char) * (length + digest_length));
 	aes256_done(&ctx);
-	/* Saving data to the frame. */
-	devp2p_packet_info->data_size = length;
-	devp2p_packet_info->data = wmem_alloc(wmem_file_scope(), length * sizeof(unsigned char));
-	for (guint i = 0; i < length; i++) {
-		devp2p_packet_info->data[i] = buf[i + digest_length];
+
+	/* Calculate pdu length using the first three bytes */
+	guint pdu_length;
+	pdu_length = buf[0 + digest_length] * 256 * 256;
+	pdu_length += buf[1 + digest_length] * 256;
+	pdu_length += buf[2 + digest_length];
+	if (pdu_length % 16) {
+		pdu_length = (pdu_length / 16 + 1) * 16;
 	}
+	pdu_length += 48;
 	wmem_free(wmem_file_scope(), buf);
+	return pdu_length;
 }
 
 /**
-* Decrypt the frame length.
+* Attempt to get a conversation based on the given packet info.
 *
-* @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
-* @param secret - The secret (aes-key, initial counter value) of this wire conversation.
-* @param devp2p_packet_info - The frame data.
-*/
-static guint decrypt_frame_length(tvbuff_t *tvb, devp2p_conv_t *secret) {
-	devp2p_packet_info_t *temp;
-	temp = wmem_new(wmem_file_scope(), devp2p_packet_info_t);
-	decrypt_aes_256_ctr_data(tvb, HEADER_LENGTH - MAC_LENGTH, secret, temp);
-	guint length;
-	length = temp->data[0] * 256 * 256;
-	length += temp->data[1] * 256;
-	length += temp->data[2];
-	g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "16:data: %02x%02x%02x, first 2: %02x%02x", temp->data[0], temp->data[1], temp->data[2], tvb_get_guint8(tvb, 0), tvb_get_guint8(tvb, 1));
-	if (length % 16) {
-		length = (length / 16 + 1) * 16;
-	}
-	length += 48;
-	wmem_free(wmem_file_scope(), temp);
-	return length;
-}
-
-/**
-* Attempt to get a conversation
-*
-* @param pinfo - The Packet.
-* @return conversation if found, or NULL if not existed
+* @param pinfo - The packet info.
+* @return a matching conversation if found or NULL otherwise.
 */
 static conversation_t* attempt_to_get_conversation(packet_info *pinfo) {
 	guint32 peer_ip = 0;
@@ -156,6 +159,78 @@ static conversation_t* attempt_to_get_conversation(packet_info *pinfo) {
 	peer_ip |= ((guint8 *)pinfo->src.data)[2] * 256;
 	peer_ip |= ((guint8 *)pinfo->src.data)[3];
 	return find_conversation(pinfo->num, &pinfo->dst, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR_B | NO_PORT_B);
+}
+
+/**
+* Test if given packet contains an exisitng matched pdu associated with the given start position.
+*
+* @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
+* @param devp2p_packet_info - The devp2p packet data.
+* @param start_position - The start position of this pdu in this packet.
+* @param pdu_length - Reference to the length of the pdu (It will be set if an existing pdu has been found).
+* @return TRUE if a match is found or FALSE otherwise.
+*/
+static gboolean is_in_pdu_list(tvbuff_t *tvb, devp2p_packet_info_t *devp2p_packet_info, guint start_position, guint *pdu_length) {
+	/* Set up the pdu id. */
+	guint8 pdu_id[5];
+	pdu_id[0] = tvb_get_guint8(tvb, start_position);
+	pdu_id[1] = tvb_get_guint8(tvb, start_position + 1);
+	pdu_id[2] = tvb_get_guint8(tvb, start_position + 2);
+	pdu_id[3] = tvb_get_guint8(tvb, start_position + 3);
+	pdu_id[4] = start_position;
+
+	/* Search from the head of the pdu list. */
+	devp2p_pdu_data_t *target = devp2p_packet_info->head;
+	while (target != NULL) {
+		if (target->pdu_id[0] == pdu_id[0] && target->pdu_id[1] == pdu_id[1] &&
+			target->pdu_id[2] == pdu_id[2] && target->pdu_id[3] == pdu_id[3] &&
+			target->pdu_id[4] == pdu_id[4]) {
+			/* Find a match, set the length */
+			*pdu_length = target->pdu_length;
+			return TRUE;
+		}
+		target = target->next;
+	}
+	/* Not found if reach here. */
+	return FALSE;
+}
+
+/**
+* Save the pdu associated with the given start position to the packet.
+*
+* @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
+* @param devp2p_packet_info - The devp2p packet data.
+* @param secret - The secret (aes-key, initial counter value) of this wire conversation.
+* @param start_position - The start position of this pdu in this packet.
+* @param pdu_length - The length of the pdu.
+* @return TRUE if a match is found or FALSE otherwise.
+*/
+static void save_to_pdu_list(tvbuff_t *tvb, devp2p_packet_info_t *devp2p_packet_info, devp2p_conv_t *secret, guint start_position, guint pdu_length) {
+	/* Set up the pdu id. */
+	guint8 pdu_id[5];
+	pdu_id[0] = tvb_get_guint8(tvb, start_position);
+	pdu_id[1] = tvb_get_guint8(tvb, start_position + 1);
+	pdu_id[2] = tvb_get_guint8(tvb, start_position + 2);
+	pdu_id[3] = tvb_get_guint8(tvb, start_position + 3);
+	pdu_id[4] = start_position;
+
+	/* Create a new pdu data. */
+	devp2p_pdu_data_t *new_pdu;
+	new_pdu = wmem_new(wmem_file_scope(), devp2p_pdu_data_t);
+	new_pdu->pdu_id[0] = pdu_id[0];
+	new_pdu->pdu_id[1] = pdu_id[1];
+	new_pdu->pdu_id[2] = pdu_id[2];
+	new_pdu->pdu_id[3] = pdu_id[3];
+	new_pdu->pdu_id[4] = pdu_id[4];
+	new_pdu->pdu_offset = secret->current_offset;
+	new_pdu->pdu_index = secret->pdu_count;
+	new_pdu->pdu_length = pdu_length;
+	/* Insert the pdu data to the head of the pdu list. */
+	new_pdu->next = devp2p_packet_info->head;
+
+	/* Change the head of the pdu list to be this new pdu. */
+	devp2p_packet_info->head = new_pdu;
+	devp2p_packet_info->pdu_size++;
 }
 
 /**
@@ -185,20 +260,61 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 		peer_ip = tvb_get_guint32(tvb, offset, ENC_BIG_ENDIAN);
 		offset += 4;
 		proto_tree_add_item(key_tree, hf_devp2p_wire_secret_key, tvb, offset, 32, ENC_BIG_ENDIAN);
-
 		/* Create Conversation, send data towards actual devp2p-wire dissector */
 		if (!PINFO_FD_VISITED(pinfo)) {
-			conversation_t *conversation;
-			conversation = conversation_new(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR2 | NO_PORT2);
-			/* Add data */
-			devp2p_conv_t *secret;
-			secret = wmem_new(wmem_file_scope(), devp2p_conv_t);
-			secret->current_offset = 0;
-			for (int i = 0; i < 32; i++) {
-				secret->aes_key[i] = tvb_get_guint8(tvb, offset++);
+			/* Set up address for outgoing connection. */ 
+			/* Incoming connection can be obtained by using pinfo. */
+			address dst;
+			dst.type = AT_IPv4, dst.len = 4;
+			guint8 *temp_data;
+			temp_data = (guint8 *)wmem_alloc(wmem_file_scope(), 4 * sizeof(guint8));
+			temp_data[0] = (peer_ip >> 24) & 0x000000FF, temp_data[1] = (peer_ip >> 16) & 0x000000FF;
+			temp_data[2] = (peer_ip >> 8) & 0x000000FF, temp_data[3] = (peer_ip) & 0x000000FF;
+			dst.data = (const void *)temp_data, dst.priv = NULL;
+			guint32 my_ip = 0;
+			my_ip |= ((guint8 *)pinfo->src.data)[0] * 256 * 256 * 256;
+			my_ip |= ((guint8 *)pinfo->src.data)[1] * 256 * 256;
+			my_ip |= ((guint8 *)pinfo->src.data)[2] * 256;
+			my_ip |= ((guint8 *)pinfo->src.data)[3];
+			
+			/* Create conversation for both incoming and outgoing connection. */
+			conversation_t *conversation_in;
+			conversation_t *conversation_out;
+			conversation_in = find_conversation(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR_B | NO_PORT_B);
+			conversation_out = find_conversation(pinfo->num, &dst, NULL, ENDPOINT_NONE, my_ip, my_ip, NO_ADDR_B | NO_PORT_B);
+			
+			/* Two conversations will be either both NULL or both existed. */
+			if (conversation_in == NULL && conversation_out == NULL) {
+				conversation_in = conversation_new(pinfo->num, &pinfo->src, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR2 | NO_PORT2);
+				conversation_out = conversation_new(pinfo->num, &dst, NULL, ENDPOINT_NONE, my_ip, my_ip, NO_ADDR_B | NO_PORT_B);
 			}
-			secret->start = TRUE;
-			conversation_add_proto_data(conversation, proto_devp2p_wire, (void *)secret);
+			devp2p_conv_t *secret_in;
+			devp2p_conv_t *secret_out;
+			secret_in = (devp2p_conv_t *)conversation_get_proto_data(conversation_in, proto_devp2p_wire);
+			secret_out = (devp2p_conv_t *)conversation_get_proto_data(conversation_out, proto_devp2p_wire);
+			if (!secret_in && !secret_out) {
+				/* Create new data. */
+				secret_in = wmem_new(wmem_file_scope(), devp2p_conv_t);
+				secret_out = wmem_new(wmem_file_scope(), devp2p_conv_t);
+				
+				/* Set up AES key and initialise data. */
+				for (int i = 0; i < 32; i++) {
+					secret_in->aes_key[i] = tvb_get_guint8(tvb, offset);
+					secret_out->aes_key[i] = tvb_get_guint8(tvb, offset);
+					offset++;
+				}
+				secret_in->current_offset = secret_out->current_offset = 0;
+				secret_in->pdu_count = secret_out->pdu_count = 0;
+				secret_in->pdu_status = secret_out->pdu_status = GET_LENGTH;
+
+				/* For outgoing connection, we don't need to skip the first packet. */
+				secret_in->start = TRUE, secret_out->start = FALSE;
+
+				/* Add secret to the conversation. */
+				conversation_add_proto_data(conversation_in, proto_devp2p_wire, (void *)secret_in);
+				conversation_add_proto_data(conversation_out, proto_devp2p_wire, (void *)secret_out);
+			}
+			wmem_free(wmem_file_scope(), temp_data);
 		}
 		return TRUE;
 	}
@@ -206,7 +322,7 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 }
 
 /**
-* Dissect the devp2p-wire frames.
+* Dissect the devp2p-wire pdus.
 *
 * @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
 * @param pinfo - The Packet.
@@ -214,31 +330,32 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 * @param data - Extra data.
 */
 static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree _U_, void *data _U_) {
-	/* Obtain conversation, secret and frame data. */
+	/* Obtain conversation, secret and pdu data. */
 	conversation_t *conversation;
 	conversation = attempt_to_get_conversation(pinfo);
 	devp2p_conv_t *secret;
 	secret = (devp2p_conv_t *)conversation_get_proto_data(conversation, proto_devp2p_wire);
 	devp2p_packet_info_t *devp2p_packet_info;
 	devp2p_packet_info = (devp2p_packet_info_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num);
-
-	if (devp2p_packet_info->update) {
+	
+	if (devp2p_packet_info->update_secret) {
 		/* The current offset of this wire conversation needs to be updated. */
-		secret->current_offset += devp2p_packet_info->length - 32;
-		devp2p_packet_info->update = FALSE;
-		devp2p_packet_info->visited_times = 2;
-		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Updated!\n\n\n", pinfo->num);
+		secret->current_offset += tvb_captured_length(tvb) - 32;
+
+		/* Next state after dissecting must be to get length. */
+		secret->pdu_status = GET_LENGTH;
+		devp2p_packet_info->update_secret = FALSE;
 	}
-	g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "Frame: %d, Dessected\n\n\n", pinfo->num);
+
 	return tvb_captured_length(tvb);
 }
 
 /**
-* Get the size of this frame.
+* Get the size of this pdu.
 *
 * @param pinfo - The Packet.
 * @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
-* @param offset - The offset.
+* @param offset - The start position in this packet.
 * @param data - Extra data.
 */
 static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, int offset, void *data _U_) {
@@ -249,17 +366,44 @@ static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, i
 	secret = (devp2p_conv_t *)conversation_get_proto_data(conversation, proto_devp2p_wire);
 	devp2p_packet_info_t *devp2p_packet_info;
 	devp2p_packet_info = (devp2p_packet_info_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num);
+	
+	guint start_position = (guint)offset;
+	guint pdu_length;
 
-	if (devp2p_packet_info->visited_times < 2) {
-		devp2p_packet_info->offset = secret->current_offset;
-		devp2p_packet_info->length = decrypt_frame_length(tvb, secret);
-		devp2p_packet_info->update = TRUE;
-		devp2p_packet_info->visited_times = 1;
-		g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "%d, Frame: %d, offset: %d, length: %d\n\n\n", 
-			devp2p_packet_info->visited_times, pinfo->num, secret->current_offset, devp2p_packet_info->length);
+	/* If a pdu associated with this packet exists */
+	if (is_in_pdu_list(tvb, devp2p_packet_info, start_position, &pdu_length)) {
+		/* There is an existing pdu associated with this packet and start position, */
+		/* which means it is a packet revisiting action, return the length stored. */
+		return pdu_length;
 	}
-	return devp2p_packet_info->length;
+	else {
+		/* There is no match found, either we need to return a length or verify a length from previous packet. */
+		/* Either way, we need to decrypt the length. */
+		pdu_length = decrypt_length(tvb, secret, start_position);
+
+		if (secret->pdu_status == VERIFY_LENGTH) {
+			/* The pdu status at the moment is to verify. */
+			/* It will enter dissecting routine, where secret gets updated. */
+			devp2p_packet_info->update_secret = TRUE;
+		}
+		else {
+			/* The pdu status at the moment is get a length. */
+			if (pdu_length + start_position <= tvb_captured_length(tvb)) {
+				/* This packet still contains the next pdu. */
+				/* It will skip the Verify and enter dissecting routine, update secret. */
+				devp2p_packet_info->update_secret = TRUE;
+			}
+		}
+
+		/* Save to the pdu list in this packet. */
+		save_to_pdu_list(tvb, devp2p_packet_info, secret, start_position, pdu_length);
+
+		/* Either way, set the next status to be Verify. */
+		secret->pdu_status = VERIFY_LENGTH;
+	}
+	return pdu_length;
 }
+
 
 /**
 * Dissect the devp2p-wire packets.
@@ -276,41 +420,46 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 
 	if (tvb_captured_length(tvb) > 0 && pinfo->src.type == AT_IPv4) {
 		conversation_t *conversation;
-		/* If this is a valid wire communication comes from the ==patched== geth client. */
+
+		/* Check if this is a valid wire communication comes from the ==patched== geth client. */
 		conversation = attempt_to_get_conversation(pinfo);
 		if (conversation == NULL) {
-			/* No conversation found. */
+			/* No conversation found, this is not a valid devp2p wire packet. */
 			return FALSE;
 		}
-		
+
 		/* Conversation found, get secret. */
 		secret = (devp2p_conv_t *)conversation_get_proto_data(conversation, proto_devp2p_wire);
 
-		/* Attempt to get frame data. */
+		/* Attempt to get packet data. */
 		devp2p_packet_info = (devp2p_packet_info_t *)p_get_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num);
+
 		if (devp2p_packet_info == NULL) {
-			/* No frame data found, create a new one. */
+			/* No packet data found, create a new one. */
 			devp2p_packet_info = wmem_new(wmem_file_scope(), devp2p_packet_info_t);
 			if (secret->start) {
 				/* If this is the first packet detected, it is handshake, mark the packet. */
-				devp2p_packet_info->type = HANDSHAKE;
+				devp2p_packet_info->packet_type = HANDSHAKE;
 				secret->start = FALSE;
 			}
 			else {
-				devp2p_packet_info->type = RLPX_PACKET;
+				devp2p_packet_info->packet_type = RLPX_PACKET;
 			}
-			devp2p_packet_info->length = 0;
-			devp2p_packet_info->visited_times = 0;
+			/* Initialise packet data. */
+			devp2p_packet_info->update_secret = FALSE;
+			devp2p_packet_info->pdu_size = 0;
+			devp2p_packet_info->head = NULL;
 			p_add_proto_data(wmem_file_scope(), pinfo, proto_devp2p_wire, pinfo->num, devp2p_packet_info);
 		}
-		if (devp2p_packet_info->type == HANDSHAKE) {
-			/* If the packet is Encrypted handshake, skip it */
+		if (devp2p_packet_info->packet_type == HANDSHAKE) {
+			/* The packet is an Encrypted handshake, skip it. */
 			col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2WIRE Encrypted Handshake");
 		}
 		else {
+			/* The packet is a RLPX Packet. */
 			col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PWIRE");
-			/* Conduct tcp reassembly, dissect frame once reassembled */
-			tcp_dissect_pdus(tvb, pinfo, tree, TRUE, HEADER_LENGTH, get_devp2p_wire_pdu_length, dissect_devp2p_wire_pdu, data);
+			/* Conduct tcp reassembly, dissect frame once reassembled. */
+			tcp_dissect_pdus(tvb, pinfo, tree, TRUE, HEADER_LEN, get_devp2p_wire_pdu_length, dissect_devp2p_wire_pdu, data);
 		}
 		return TRUE;
 	}
@@ -326,15 +475,15 @@ void proto_register_devp2p_wire(void) {
 
 		{ &hf_devp2p_wire_secret_ip,
 		{ "Devp2p Wire Secret IP", "devp2pwire.secret.ip", FT_IPv4, BASE_NONE,
-		NULL, 0x0, NULL, HFILL }},
+		NULL, 0x0, NULL, HFILL } },
 
 		{ &hf_devp2p_wire_secret_key,
 		{ "Devp2p Wire Secret AES Key", "devp2pwire.secret.key", FT_BYTES, BASE_NONE,
-		NULL, 0x0, NULL, HFILL }},
+		NULL, 0x0, NULL, HFILL } },
 
 		{ &hf_devp2p_wire_raw_message,
 		{ "Devp2p Wire Secret Raw message", "devp2pwire.raw", FT_STRING, BASE_NONE,
-		NULL, 0x0, NULL, HFILL }}
+		NULL, 0x0, NULL, HFILL } }
 	};
 
 	static gint *ett[] = {
