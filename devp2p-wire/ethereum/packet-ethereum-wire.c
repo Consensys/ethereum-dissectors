@@ -31,6 +31,7 @@
 #include <epan/conversation.h>
 
 #define	HEADER_LEN						32
+#define HEADER_DATA_LEN					16
 #define MAC_LEN							16
 #define LENGTH_LEN						3
 
@@ -61,7 +62,7 @@ typedef struct _devp2p_conv_t {
 	guint current_offset;				/* To give each pdu an initial AES counter value. */
 	gboolean start;						/* To skip the encrypted handshake for incoming tcp traffic. */
 	guint pdu_count;					/* To count the tcp pdu number. */
-	pdu_status_e pdu_status;					/* To keep track of the pdu resembly status. */
+	pdu_status_e pdu_status;			/* To keep track of the pdu resembly status. */
 } devp2p_conv_t;
 
 /* Information holds for each resembled tcp pdu. */
@@ -147,6 +148,55 @@ static guint decrypt_length(tvbuff_t *tvb, devp2p_conv_t *secret, guint start_po
 }
 
 /**
+* Decrypt the pdu data.
+*
+* @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
+* @param secret - The secret (aes-key, initial counter value) of this wire conversation.
+* @param devp2p_pdu - The undecrypted pdu data.
+*/
+static void decrypt_pdu_content(tvbuff_t *tvb, devp2p_conv_t *secret, devp2p_pdu_data_t *devp2p_pdu) {
+	/* Set up cipher. */
+	rfc3686_blk ctr = {
+		{ 0x00, 0x00, 0x00, 0x00 },
+		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		{ 0x00, 0x00, 0x00, 0x00 }
+	};
+	set_aes_ctr_value(&ctr, devp2p_pdu->pdu_offset);
+	aes256_context ctx;
+	aes256_init(&ctx, secret->aes_key);
+	aes256_setCtrBlk(&ctx, &ctr);
+
+	/* Collect bytes that needs to be decrypted, not including MAC */
+	unsigned char *buf;
+	guint digest_length = secret->current_offset % 16;
+	guint length = tvb_captured_length(tvb) - 2 * MAC_LEN;
+	buf = (unsigned char *)wmem_alloc(wmem_file_scope(), (length + digest_length) * sizeof(unsigned char));
+	for (guint i = 0; i < digest_length; i++) {
+		buf[i] = 0;
+	}
+	/* Collect header data */
+	for (guint i = 0; i < HEADER_DATA_LEN; i++) {
+		buf[digest_length + i] = tvb_get_guint8(tvb, i);
+	}
+	/* Collect frame data */
+	for (guint i = 0; i < length - HEADER_DATA_LEN ; i++) {
+		buf[digest_length + i] = tvb_get_guint8(tvb, i + HEADER_LEN);
+	}
+
+	/* Perform aes256 decryption. */
+	aes256_encrypt_ctr(&ctx, buf, sizeof(unsigned char) * (length + digest_length));
+	aes256_done(&ctx);
+
+	/* Saving data to the pdu */
+	devp2p_pdu->data_size = length;
+	devp2p_pdu->data = wmem_alloc(wmem_file_scope(), length * sizeof(unsigned char));
+	for (guint i = 0; i < length; i++) {
+		devp2p_pdu->data[i] = buf[i + digest_length];
+	}
+	wmem_free(wmem_file_scope(), buf);
+}
+
+/**
 * Attempt to get a conversation based on the given packet info.
 *
 * @param pinfo - The packet info.
@@ -159,6 +209,35 @@ static conversation_t* attempt_to_get_conversation(packet_info *pinfo) {
 	peer_ip |= ((guint8 *)pinfo->src.data)[2] * 256;
 	peer_ip |= ((guint8 *)pinfo->src.data)[3];
 	return find_conversation(pinfo->num, &pinfo->dst, NULL, ENDPOINT_NONE, peer_ip, peer_ip, NO_ADDR_B | NO_PORT_B);
+}
+
+/**
+* Search an existing matched pdu in the packet data associated with the given start position.
+*
+* @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
+* @param devp2p_packet_info - The devp2p packet data.
+* @return the pdu data if a match is found or NULL otherwise.
+*/
+static devp2p_pdu_data_t * try_find_pdu(tvbuff_t *tvb, devp2p_packet_info_t *devp2p_packet_info) {
+	/* Set up the pdu id. */
+	guint8 pdu_id[4];
+	pdu_id[0] = tvb_get_guint8(tvb, 0);
+	pdu_id[1] = tvb_get_guint8(tvb, 1);
+	pdu_id[2] = tvb_get_guint8(tvb, 2);
+	pdu_id[3] = tvb_get_guint8(tvb, 3);
+
+	/* Search from the head of the pdu list. */
+	devp2p_pdu_data_t *target = devp2p_packet_info->head;
+	while (target != NULL) {
+		if (target->pdu_id[0] == pdu_id[0] && target->pdu_id[1] == pdu_id[1] &&
+			target->pdu_id[2] == pdu_id[2] && target->pdu_id[3] == pdu_id[3]) {
+			/* Find a match, return the target */
+			return target;
+		}
+		target = target->next;
+	}
+	/* Not found if reach here. */
+	return NULL;
 }
 
 /**
@@ -225,6 +304,7 @@ static void save_to_pdu_list(tvbuff_t *tvb, devp2p_packet_info_t *devp2p_packet_
 	new_pdu->pdu_offset = secret->current_offset;
 	new_pdu->pdu_index = secret->pdu_count;
 	new_pdu->pdu_length = pdu_length;
+	new_pdu->data_size = 0;
 	/* Insert the pdu data to the head of the pdu list. */
 	new_pdu->next = devp2p_packet_info->head;
 
@@ -250,7 +330,9 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 	if (tvb_get_guint8(tvb, 0) == '?' && tvb_get_guint8(tvb, 1) == '?' &&
 		tvb_captured_length(tvb) == 38 && pinfo->destport == 8888) {
 		/* Set info column. */
-		col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PWIRE SECRET");
+		col_set_str(pinfo->cinfo, COL_PROTOCOL, "Ethereum secret");
+		col_set_str(pinfo->cinfo, COL_INFO, "Secret from patched geth");
+
 		gint offset = 0;
 		proto_item *ti = proto_tree_add_item(tree, proto_devp2p_wire, tvb, 0, -1, ENC_NA);
 		proto_tree *key_tree = proto_item_add_subtree(ti, ett_devp2p_wire);
@@ -322,12 +404,13 @@ static int dissect_devp2p_wire_udp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 }
 
 /**
-* Dissect the devp2p-wire pdus.
+* Dissect the devp2p-wire pdu.
 *
 * @param tvb - The buffer representing only the packet payload (excluding the message wrapper).
 * @param pinfo - The Packet.
 * @param tree - The protocol tree representing the packet.
 * @param data - Extra data.
+* @return captured length.
 */
 static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree _U_, void *data _U_) {
 	/* Obtain conversation, secret and pdu data. */
@@ -346,6 +429,17 @@ static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_
 		secret->pdu_status = GET_LENGTH;
 		devp2p_packet_info->update_secret = FALSE;
 	}
+
+	/* Try to get pdu data */
+	devp2p_pdu_data_t *devp2p_pdu;
+	devp2p_pdu = try_find_pdu(tvb, devp2p_packet_info);
+	if (devp2p_pdu->data_size == 0) {
+		/* The pdu data hasn't been decrypted yet, perform decryption. */
+		decrypt_pdu_content(tvb, secret, devp2p_pdu);
+	}
+	
+	/* Dissecting */
+	col_set_str(pinfo->cinfo, COL_INFO, "Ethereum rlpx frame");
 
 	return tvb_captured_length(tvb);
 }
@@ -387,7 +481,7 @@ static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, i
 			devp2p_packet_info->update_secret = TRUE;
 		}
 		else {
-			/* The pdu status at the moment is get a length. */
+			/* The pdu status at the moment is to get a length. */
 			if (pdu_length + start_position <= tvb_captured_length(tvb)) {
 				/* This packet still contains the next pdu. */
 				/* It will skip the Verify and enter dissecting routine, update secret. */
@@ -403,7 +497,6 @@ static guint get_devp2p_wire_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb, i
 	}
 	return pdu_length;
 }
-
 
 /**
 * Dissect the devp2p-wire packets.
@@ -453,11 +546,12 @@ static int dissect_devp2p_wire_tcp(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 		}
 		if (devp2p_packet_info->packet_type == HANDSHAKE) {
 			/* The packet is an Encrypted handshake, skip it. */
-			col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2WIRE Encrypted Handshake");
+			col_set_str(pinfo->cinfo, COL_PROTOCOL, "Ethereum");
+			col_set_str(pinfo->cinfo, COL_INFO, "Ethereum encrypted handshake");
 		}
 		else {
 			/* The packet is a RLPX Packet. */
-			col_set_str(pinfo->cinfo, COL_PROTOCOL, "ETHDEVP2PWIRE");
+			col_set_str(pinfo->cinfo, COL_PROTOCOL, "Ethereum");
 			/* Conduct tcp reassembly, dissect frame once reassembled. */
 			tcp_dissect_pdus(tvb, pinfo, tree, TRUE, HEADER_LEN, get_devp2p_wire_pdu_length, dissect_devp2p_wire_pdu, data);
 		}

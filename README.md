@@ -2,7 +2,7 @@
 
 This repo contains a set of network protocol dissectors for Ethereum that you can load into the widely popular Wireshark to begin inspecting Ethereum traffic. 
 
-Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works.
+Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works. 
 
 <p align="center">
 <img src="https://github.com/ConsenSys/devp2p-dissectors/raw/web/assets/ethereum-discovery-demo.gif" alt="Ethereum discovery dissector demo">
@@ -18,6 +18,14 @@ Here are the features currently supported by the Ethereum Discovery dissector (w
   * under: Statistics > Service Response Time > ETH discovery.
   * inline in protocol trees.
 * Useful protocol statistics (e.g. message counts per type, nodes reported per response, etc.)
+
+# Protocol version support
+
+| Protocol	| Version	| Status         | Notes					|
+| ------------- | ------------- | -------------- | -------------------------------------------- |
+| discovery	| v4		| ✅		| 					       |
+| discovery	| v5		| 🚧		 | v5 is work-in-progress in clients. Refer to issues and PRs labelled [discv5](https://github.com/ConsenSys/ethereum-dissectors/labels/discv5).					|
+| wire		| v1		| 🚧		 | wip branch: [devp2p-wire](//github.com/ConsenSys/ethereum-dissectors/tree/devp2p-wire)						|
 
 # Table of contents
 
@@ -38,6 +46,8 @@ Here are the features currently supported by the Ethereum Discovery dissector (w
 
 ```
 $ cd ${WIRESHARK_SRC}
+$ # check out the latest 2.6 tag (could be higher)
+$ git checkout wireshark-2.6.2
 $ mkdir ../wireshark-ninja
 $ cd ../wireshark-ninja
 $ cmake -G Ninja ../wireshark
@@ -61,9 +71,12 @@ $ ninja
 
 # Team
 
-* Raúl Kripalani -- project lead
-* Zhenyang Shi
-* Scott Whittington
+Ordered alphabetically by surname.
+
+* Raúl Kripalani (ConsenSys/Protocol Labs) -- project lead
+* Guilherme Salgado (Py-EVM)
+* Zhenyang Shi (University of Queensland)
+* Scott Whittington (University of Queensland)
 
 # Why this project?
 
