@@ -30,10 +30,11 @@
 #include <epan/proto_data.h>
 #include <epan/conversation.h>
 
-#define	HEADER_LEN						32
-#define HEADER_DATA_LEN					16
-#define MAC_LEN							16
-#define LENGTH_LEN						3
+#define	HEADER_LEN				32
+#define	HEADER_DATA_LEN			16
+#define	MAC_LEN					16
+#define	UNIT_FRAME_LEN			16
+#define	LENGTH_LEN				3
 
 /* To indicate the type of this packet (Handshake or rlpx frame) */
 typedef enum packet_type {
@@ -54,7 +55,13 @@ static gint ett_devp2p_wire = -1;
 /* For displaying secret comes out from ==patched== geth client. */
 static int hf_devp2p_wire_secret_ip;
 static int hf_devp2p_wire_secret_key;
-static int hf_devp2p_wire_raw_message;
+
+/* For displaying information on each pdu */
+static int hf_devp2p_wire_header_data;
+static int hf_devp2p_wire_header_mac;
+static int hf_devp2p_wire_frame_data_start;
+static int hf_devp2p_wire_frame_data;
+static int hf_devp2p_wire_frame_mac;
 
 /* Information holds for each wire conversation. */
 typedef struct _devp2p_conv_t {
@@ -168,7 +175,7 @@ static void decrypt_pdu_content(tvbuff_t *tvb, devp2p_conv_t *secret, devp2p_pdu
 
 	/* Collect bytes that needs to be decrypted, not including MAC */
 	unsigned char *buf;
-	guint digest_length = secret->current_offset % 16;
+	guint digest_length = devp2p_pdu->pdu_offset % 16;
 	guint length = tvb_captured_length(tvb) - 2 * MAC_LEN;
 	buf = (unsigned char *)wmem_alloc(wmem_file_scope(), (length + digest_length) * sizeof(unsigned char));
 	for (guint i = 0; i < digest_length; i++) {
@@ -179,7 +186,7 @@ static void decrypt_pdu_content(tvbuff_t *tvb, devp2p_conv_t *secret, devp2p_pdu
 		buf[digest_length + i] = tvb_get_guint8(tvb, i);
 	}
 	/* Collect frame data */
-	for (guint i = 0; i < length - HEADER_DATA_LEN ; i++) {
+	for (guint i = HEADER_DATA_LEN; i < length; i++) {
 		buf[digest_length + i] = tvb_get_guint8(tvb, i + HEADER_LEN);
 	}
 
@@ -430,7 +437,7 @@ static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_
 		devp2p_packet_info->update_secret = FALSE;
 	}
 
-	/* Try to get pdu data */
+	/* Try to get pdu data. */
 	devp2p_pdu_data_t *devp2p_pdu;
 	devp2p_pdu = try_find_pdu(tvb, devp2p_packet_info);
 	if (devp2p_pdu->data_size == 0) {
@@ -438,8 +445,42 @@ static int dissect_devp2p_wire_pdu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_
 		decrypt_pdu_content(tvb, secret, devp2p_pdu);
 	}
 	
-	/* Dissecting */
+	/* Dissecting. */
 	col_set_str(pinfo->cinfo, COL_INFO, "Ethereum rlpx frame");
+	
+	guint offset = 0;
+	proto_item *ti;
+
+	/* Display header data and mac. */
+	ti = proto_tree_add_string(tree, hf_devp2p_wire_header_data, tvb, offset, HEADER_DATA_LEN, "0x");
+	offset += 16;
+	for (guint i = 0; i < HEADER_DATA_LEN; i++) {
+		proto_item_append_text(ti, "%02x", devp2p_pdu->data[i]);
+	}
+	proto_tree_add_item(tree, hf_devp2p_wire_header_mac, tvb, offset, MAC_LEN, ENC_BIG_ENDIAN);
+	offset += 16;
+
+	/* Display frame data and mac. */
+	guint frame_len = devp2p_pdu->pdu_length - HEADER_LEN - MAC_LEN;
+	ti = proto_tree_add_string(tree, hf_devp2p_wire_frame_data_start, tvb, offset, frame_len, "Length ");
+	proto_item_append_text(ti, "%d", frame_len);
+
+	/* Add subtree. */
+	proto_tree *frame_tree;
+	frame_tree = proto_item_add_subtree(ti, ett_devp2p_wire);
+
+	/* Create new line every 16 bytes. */
+	ti = proto_tree_add_string(frame_tree, hf_devp2p_wire_frame_data, tvb, offset, UNIT_FRAME_LEN, "0x");
+	offset += UNIT_FRAME_LEN;
+	for (guint i = 0, j = 1; i < frame_len; i++, j++) {
+		proto_item_append_text(ti, "%02x", devp2p_pdu->data[i + HEADER_LEN]);
+		if (j % 16 == 0 && i != frame_len - 1) {
+			/* Create new string. */
+			ti = proto_tree_add_string(frame_tree, hf_devp2p_wire_frame_data, tvb, offset, UNIT_FRAME_LEN, "0x");
+			offset += UNIT_FRAME_LEN;
+		}
+	}
+	proto_tree_add_item(tree, hf_devp2p_wire_frame_mac, tvb, offset, MAC_LEN, ENC_BIG_ENDIAN);
 
 	return tvb_captured_length(tvb);
 }
@@ -575,9 +616,26 @@ void proto_register_devp2p_wire(void) {
 		{ "Devp2p Wire Secret AES Key", "devp2pwire.secret.key", FT_BYTES, BASE_NONE,
 		NULL, 0x0, NULL, HFILL } },
 
-		{ &hf_devp2p_wire_raw_message,
-		{ "Devp2p Wire Secret Raw message", "devp2pwire.raw", FT_STRING, BASE_NONE,
+		{ &hf_devp2p_wire_header_data,
+		{ "Devp2p Wire Rlpx Header data", "devp2pwire.header.data", FT_STRING, BASE_NONE,
+		NULL, 0x0, NULL, HFILL } },
+
+		{ &hf_devp2p_wire_header_mac,
+		{ "Devp2p Wire Rlpx Header mac", "devp2pwire.header.mac", FT_BYTES, BASE_NONE,
+		NULL, 0x0, NULL, HFILL } },
+
+		{ &hf_devp2p_wire_frame_data_start,
+		{ "Devp2p Wire Rlpx Frame data", "devp2pwire.frame.data_start", FT_STRING, BASE_NONE,
+		NULL, 0x0, NULL, HFILL } },
+
+		{ &hf_devp2p_wire_frame_data,
+		{ "Data", "devp2pwire.frame.data", FT_STRING, BASE_NONE,
+		NULL, 0x0, NULL, HFILL } },
+
+		{ &hf_devp2p_wire_frame_mac,
+		{ "Devp2p Wire Rlpx Frame mac", "devp2pwire.frame.mac", FT_BYTES, BASE_NONE,
 		NULL, 0x0, NULL, HFILL } }
+
 	};
 
 	static gint *ett[] = {
