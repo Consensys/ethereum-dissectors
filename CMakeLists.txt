@@ -25,9 +25,12 @@ include(WiresharkPlugin)
 set_module_info(ethereum 0 0 0 0)
 
 set(DISSECTOR_SRC
+		packet-ethereum.c
 		packet-ethereum.h
-        packet-ethereum.c
 		packet-ethereum-disc.c
+		aes256.c
+        	aes256.h
+		packet-ethereum-wire.c
 )
 
 set(PLUGIN_FILES
