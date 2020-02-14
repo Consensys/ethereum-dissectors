@@ -1032,7 +1032,7 @@ static gboolean dissect_ethereum_heur(tvbuff_t *tvb, packet_info *pinfo, proto_t
  * @param st Statistics tree.
  */
 static void ethereum_discovery_stats_tree_init(stats_tree *st) {
-  st_node_packets = stats_tree_create_node(st, st_str_packets, 0, TRUE);
+  st_node_packets = stats_tree_create_node(st, st_str_packets, 0, STAT_DT_INT, TRUE);
   st_node_packet_types = stats_tree_create_pivot(st, st_str_packet_types, st_node_packets);
   st_node_packet_nodes_count = stats_tree_create_range_node(st, st_str_packet_nodecount, 0,
                                                             "0-5", "6-10", "11-", NULL);
@@ -1045,9 +1045,9 @@ static void ethereum_discovery_stats_tree_init(stats_tree *st) {
  * @param pinfo The packet info.
  * @param edt Data about the dissection.
  * @param p A pointer to the statistics struct.
- * @return TRUE if successful; FALSE otherwise.
+ * @return TAP_PACKET_REDRAW if successful; TAP_PACKET_FAILED otherwise.
  */
-static int ethereum_discovery_stats_tree_packet(stats_tree *st,
+static tap_packet_status ethereum_discovery_stats_tree_packet(stats_tree *st,
                                                 packet_info *pinfo _U_,
                                                 epan_dissect_t *edt _U_,
                                                 const void *p) {
@@ -1058,7 +1058,7 @@ static int ethereum_discovery_stats_tree_packet(stats_tree *st,
   if (stat->packet_type == NODES) {
     stats_tree_tick_range(st, st_str_packet_nodecount, 0, stat->node_count);
   }
-  return TRUE;
+  return TAP_PACKET_REDRAW;
 }
 
 /**
@@ -1074,14 +1074,11 @@ static void register_ethereum_stat_trees(void) {
  *
  * @param srt Data about the registration.
  * @param srt_array The array of SRT tables.
- * @param gui_callback GUI callback.
- * @param gui_data GUI data.
  */
-static void ethereum_srt_table_init(struct register_srt *srt _U_, GArray *srt_array,
-                                    srt_gui_init_cb gui_callback, void *gui_data) {
+static void ethereum_srt_table_init(struct register_srt *srt _U_, GArray *srt_array) {
   srt_stat_table *eth_srt_table;
   eth_srt_table = init_srt_table("Ethereum discovery packets", NULL, srt_array, 2,
-                                 NULL, NULL, gui_callback, gui_data, NULL);
+                                 NULL, NULL, NULL);
   init_srt_table_row(eth_srt_table, 0, "PING->PONG response time");
   init_srt_table_row(eth_srt_table, 1, "FIND_NODE->NODES response time");
 }
@@ -1094,9 +1091,9 @@ static void ethereum_srt_table_init(struct register_srt *srt _U_, GArray *srt_ar
  * @param pinfo The packet info.
  * @param edt Dissection data.
  * @param prv A pointer to the statistics struct.
- * @return TRUE if successful; FALSE otherwise.
+ * @return TAP_PACKET_REDRAW if successful; TAP_PACKET_FAILED otherwise.
  */
-static int ethereum_srt_table_packet(void *pss,
+static tap_packet_status ethereum_srt_table_packet(void *pss,
                                      packet_info *pinfo,
                                      epan_dissect_t *edt _U_,
                                      const void *prv) {
@@ -1104,11 +1101,11 @@ static int ethereum_srt_table_packet(void *pss,
   srt_data_t *data = (srt_data_t *) pss;
   const ethereum_disc_stat_t *stat = (const ethereum_disc_stat_t *) prv;
   if (!stat || stat->is_request || !(stat->has_request)) {
-    return FALSE;
+    return TAP_PACKET_FAILED;
   }
   eth_srt_table = g_array_index(data->srt_array, srt_stat_table*, 0);
   add_srt_table_data(eth_srt_table, (stat->packet_type - 1) / 2, &stat->rq_time, pinfo);
-  return TRUE;
+  return TAP_PACKET_REDRAW;
 }
 
 /**
