@@ -1,8 +1,8 @@
 # 🔍 Wireshark dissectors for Ethereum devp2p protocols
 
-This repo contains a set of network protocol dissectors for Ethereum that you can load into the widely popular Wireshark to begin inspecting Ethereum traffic. 
+This repo contains a set of network protocol dissectors for Ethereum that you can load into the widely popular Wireshark to begin inspecting Ethereum traffic.
 
-Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works. 
+Currently we support the UDP-based discovery protocol, but support for the RLPx Wire protocol and the ETH subprotocol are in the works.
 
 <p align="center">
 <img src="https://github.com/ConsenSys/devp2p-dissectors/raw/web/assets/ethereum-discovery-demo.gif" alt="Ethereum discovery dissector demo">
@@ -46,8 +46,8 @@ Here are the features currently supported by the Ethereum Discovery dissector (w
 
 ```
 $ cd ${WIRESHARK_SRC}
-$ # check out the latest 2.6 tag (could be higher)
-$ git checkout wireshark-2.6.2
+$ # check out the latest 3.2 tag (could be higher)
+$ git checkout wireshark-3.2.1
 $ mkdir ../wireshark-ninja
 $ cd ../wireshark-ninja
 $ cmake -G Ninja ../wireshark
@@ -82,7 +82,7 @@ Ordered alphabetically by surname.
 
 In the Protocol Engineering Groups and Systems team (PegaSys) at ConsenSys, we specialise in the low-level, deep aspects of the Ethereum technology. Some of the challenges we tackle are: scalability, secrecy, modularity, finality, permissioning, etc.
 
-To perform our job we need tooling to x-ray into different parts of the system. One of those parts is the networking layer. No central authority exists in public chain Ethereum, hence all communication is peer-to-peer (P2P), which gives rise to both RPC-style and gossip-like communication patterns we need full insight of during development, research and testing. 
+To perform our job we need tooling to x-ray into different parts of the system. One of those parts is the networking layer. No central authority exists in public chain Ethereum, hence all communication is peer-to-peer (P2P), which gives rise to both RPC-style and gossip-like communication patterns we need full insight of during development, research and testing.
 
 [devp2p](https://github.com/ethereum/devp2p) is the name of the networking subsystem of Ethereum, along with its collection of core protocols on top of which subprotocols like ETH, Whisper, Swarm, Light Ethereum, etc. are layered.
 
@@ -94,7 +94,7 @@ Unfortunately no Wireshark dissectors exist yet for Ethereum devp2p protocols. T
 
 <a href="https://pegasys.tech/?utm_source=github&utm_medium=source&utm_campaign=ethereum-dissectors" rel="nofollow"><img src="https://github.com/ConsenSys/devp2p-dissectors/raw/web/assets/logo.png" alt="PegaSys logo" data-canonical-src="https://github.com/ConsenSys/devp2p-dissectors/raw/web/assets/logo.png" width=450></a>
 
-PegaSys’ mission is to build blockchain solutions ready for production in business environments. We are committed to open source, and are creating a framework for collaborative innovation for the public-chain community and leading enterprises. 
+PegaSys’ mission is to build blockchain solutions ready for production in business environments. We are committed to open source, and are creating a framework for collaborative innovation for the public-chain community and leading enterprises.
 
 Our team is composed of engineers leading in the areas of big data processing, applied cryptography, open source computing, cloud services, and blockchain development.
 
